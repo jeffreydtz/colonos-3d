@@ -1,0 +1,7 @@
+node_modules
+dist
+.git
+agent-tools
+*.md
+.env
+coverage
