@@ -47,6 +47,14 @@ body,
   height: 100%;
 }
 
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
 body {
   background:
     radial-gradient(1200px 600px at 50% -10%, color-mix(in srgb, var(--c-gold) 18%, transparent) 0%, transparent 55%),

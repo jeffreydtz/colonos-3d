@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { SFX_CATEGORIES, SFX_CATEGORY_LABEL } from "../audio/prefs";
 import { countAfterHold, diceHeld, gainsWhileHeld, resourcesAfterHold, skipDiceHold } from "../play/diceHold";
 import { COLOR_HEX, RESOURCE_LABEL } from "@shared/constants";
@@ -930,6 +931,76 @@ export function Hud({ view }: { view: ClientView }) {
   );
 }
 
+function usePhoneLayout(): boolean {
+  const [phone, setPhone] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 1023px)").matches : false,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1023px)");
+    const apply = () => setPhone(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+  return phone;
+}
+
+/** 4:1 / puerto. En el celu es una hoja fija sobre la barra del navegador, no un popover de la mano. */
+function BankQuick({
+  view,
+  from,
+  onPick,
+  onClose,
+}: {
+  view: ClientView;
+  from: Resource;
+  onPick: (want: Resource) => void;
+  onClose: () => void;
+}) {
+  const phone = usePhoneLayout();
+  const rate = settlementPortRate(view, view.youId, from);
+  const body = (
+    <>
+      <p className="mb-2 text-center text-sm text-amber-50">
+        Das {rate} <ResourceIcon resource={from} size={18} decorative /> · ¿qué pedís?
+      </p>
+      <div className="flex justify-around gap-1">
+        {RESOURCES.filter((r) => r !== from).map((want) => (
+          <ResourcePick key={want} resource={want} size={28} onClick={() => onPick(want)} />
+        ))}
+      </div>
+    </>
+  );
+  if (phone) {
+    return createPortal(
+      <div className="pointer-events-auto fixed inset-0 z-[80]" data-testid="bank-quick-layer">
+        <button
+          type="button"
+          className="absolute inset-0 bg-black/45"
+          aria-label="Cerrar cambio con el banco"
+          data-testid="bank-quick-dismiss"
+          onClick={onClose}
+        />
+        <div
+          className="absolute inset-x-2 z-10 rounded-2xl border border-amber-200/40 bg-stone-950 p-3 shadow-2xl"
+          style={{ bottom: "calc(var(--vv-bottom, 0px) + max(0.75rem, env(safe-area-inset-bottom)))" }}
+          data-testid="bank-quick"
+          role="dialog"
+          aria-label="Cambio con el banco"
+        >
+          {body}
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+  return (
+    <div className="absolute bottom-full left-0 right-0 z-30 mb-1 rounded-xl border border-amber-200/25 bg-stone-950 p-2" data-testid="bank-quick">
+      {body}
+    </div>
+  );
+}
+
 function HandStrip({ view }: { view: ClientView }) {
   const bankTradeFrom = useApp((s) => s.bankTradeFrom);
   const diceUi = useApp((s) => s.diceUi);
@@ -1005,31 +1076,23 @@ function HandStrip({ view }: { view: ClientView }) {
         </div>
       </div>
       {bankTradeFrom && (
-        <div className="absolute bottom-full left-0 right-0 mb-1 rounded-xl bg-black/85 p-2" data-testid="bank-quick">
-          <p className="mb-1 text-center text-[11px] text-amber-100/80">
-            Das {settlementPortRate(view, view.youId, bankTradeFrom)} <ResourceIcon resource={bankTradeFrom} size={16} decorative /> · ¿qué pedís?
-          </p>
-          <div className="flex justify-around">
-            {RESOURCES.filter((r) => r !== bankTradeFrom).map((want) => (
-              <ResourcePick
-                key={want}
-                resource={want}
-                size={24}
-                onClick={() => {
-                  const giveN = settlementPortRate(view, view.youId, bankTradeFrom);
-                  void previewOrRun({
-                    kind: "bank",
-                    give: { [bankTradeFrom]: giveN },
-                    want: { [want]: 1 },
-                    rate: giveN,
-                  }).then((res) => {
-                    if (res?.ok) set({ bankTradeFrom: null });
-                  });
-                }}
-              />
-            ))}
-          </div>
-        </div>
+        <BankQuick
+          view={view}
+          from={bankTradeFrom}
+          onPick={(want) => {
+            const giveN = settlementPortRate(view, view.youId, bankTradeFrom);
+            void previewOrRun({
+              kind: "bank",
+              give: { [bankTradeFrom]: giveN },
+              want: { [want]: 1 },
+              rate: giveN,
+            }).then((res) => {
+              const staged = useApp.getState().pending?.kind === "bank";
+              if (res?.ok || staged) set({ bankTradeFrom: null });
+            });
+          }}
+          onClose={() => set({ bankTradeFrom: null })}
+        />
       )}
     </div>
   );

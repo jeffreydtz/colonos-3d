@@ -7,7 +7,7 @@ import { reduceMotion } from "../../audio/sfx";
 import { robberPose } from "../../motion/curves";
 import { DURATION } from "../../motion/tokens";
 import { introIds, riseY } from "../boardIntro";
-import { ROBBER_H, ROBBER_SCALE, TILE_TOP, robberSpot } from "../geo";
+import { ROBBER_FOOT_LOCAL, ROBBER_H, ROBBER_SCALE, TILE_TOP, TOKEN_H, robberSpot } from "../geo";
 import { getMaterials } from "../materials";
 
 /** Duración completa del arco. En liviano el salto usa `DURATION.robberLite`. */
@@ -15,12 +15,13 @@ export const ROBBER_JUMP_MS = DURATION.robber;
 
 /** Peón torneado del ladrón: base, faldón, cuello y cabeza en una sola pieza. */
 function robberGeo(): THREE.LatheGeometry {
+  const f = ROBBER_FOOT_LOCAL;
   const pts = [
     [0, 0],
-    [0.145, 0],
-    [0.152, 0.018],
-    [0.14, 0.036],
-    [0.112, 0.05],
+    [f, 0],
+    [f, 0.022],
+    [f * 0.78, 0.048],
+    [0.112, 0.07],
     [0.1, 0.09],
     [0.086, 0.17],
     [0.074, 0.25],
@@ -65,7 +66,8 @@ export function Robber({
     const hex = hexes.find((h) => h.id === id);
     if (!hex) return new THREE.Vector3();
     const s = robberSpot(hex);
-    return new THREE.Vector3(s.x, TILE_TOP - 0.004, s.y);
+    // Parado sobre la ficha, no adentro: el pie opaco queda encima del número.
+    return new THREE.Vector3(s.x, TILE_TOP - 0.004 + TOKEN_H + 0.006, s.y);
   }
 
   useEffect(() => {

@@ -88,7 +88,7 @@ type Sim = {
 
 function simulate(seed: number, tray: [number, number, number]): Sim {
   const rng = mulberry32(seed);
-  const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -20, 0) });
+  const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -15, 0) });
   world.allowSleep = false;
   const solver = world.solver as CANNON.GSSolver;
   solver.iterations = 14;
@@ -96,13 +96,13 @@ function simulate(seed: number, tray: [number, number, number]): Sim {
 
   const wood = new CANNON.Material("wood");
   const ivory = new CANNON.Material("ivory");
-  // Más pesados y un poco más vivos al tocar: el número igual lo fija el servidor al asentar.
-  const feltContact = { friction: 0.55, restitution: 0.4, contactEquationStiffness: 1e7, contactEquationRelaxation: 3 };
+  // Paño de fieltro: frenan y dejan un solo salto corto. El número lo fija el servidor al asentar.
+  const feltContact = { friction: 0.78, restitution: 0.14, contactEquationStiffness: 1e7, contactEquationRelaxation: 3 };
   world.addContactMaterial(new CANNON.ContactMaterial(ivory, wood, feltContact));
   world.addContactMaterial(
     new CANNON.ContactMaterial(ivory, ivory, {
-      friction: 0.22,
-      restitution: 0.18,
+      friction: 0.45,
+      restitution: 0.06,
       contactEquationStiffness: 1e7,
       contactEquationRelaxation: 3,
     }),
@@ -131,24 +131,25 @@ function simulate(seed: number, tray: [number, number, number]): Sim {
 
   const mk = (side: number): CANNON.Body => {
     const b = new CANNON.Body({
-      mass: 0.12,
+      mass: 0.28,
       material: ivory,
       shape: new CANNON.Box(new CANNON.Vec3(HALF, HALF, HALF)),
-      linearDamping: 0.06,
-      angularDamping: 0.09,
+      linearDamping: 0.22,
+      angularDamping: 0.48,
       allowSleep: false,
     });
     const spin = new THREE.Quaternion().setFromEuler(
       new THREE.Euler(rng() * Math.PI * 2, rng() * Math.PI * 2, rng() * Math.PI * 2),
     );
     b.position.set(
-      tray[0] + side * (0.22 + rng() * 0.06),
-      feltY + HALF + 0.52 + rng() * 0.16,
-      tray[2] - 0.08 + (rng() - 0.5) * 0.1,
+      tray[0] + side * (0.36 + rng() * 0.06),
+      feltY + HALF + 0.22 + rng() * 0.08,
+      tray[2] - 0.12 + (rng() - 0.5) * 0.08,
     );
     b.quaternion.set(spin.x, spin.y, spin.z, spin.w);
-    b.velocity.set((rng() - 0.5) * 1.2, 0.12 + rng() * 0.4, 0.65 + rng() * 0.95);
-    b.angularVelocity.set((rng() - 0.5) * 14, (rng() - 0.5) * 14, (rng() - 0.5) * 14);
+    // Rodar hacia adelante, casi sin impulso hacia arriba: caen, no flotan.
+    b.velocity.set((rng() - 0.5) * 0.45, -0.15 - rng() * 0.2, 0.7 + rng() * 0.45);
+    b.angularVelocity.set((rng() - 0.5) * 6, (rng() - 0.5) * 5, (rng() - 0.5) * 6);
     world.addBody(b);
     return b;
   };

@@ -28,35 +28,28 @@ export function digitScale(n: number): number {
 }
 
 /**
- * Peón más bajo que un poblado y corrido al costado: a 0,65 tapaba la ficha desde la cámara
- * de la mesa. El radio sin escalar del torneado es 0,152.
+ * Peón opaco parado sobre la ficha, como en el Catán de mesa.
+ * La base (y = 0 del torneado) es más ancha que la cara impresa: desde la mesa no se lee el número.
  */
-export const ROBBER_SCALE = 0.8;
-export const ROBBER_FOOT_R = 0.152 * ROBBER_SCALE;
-/** Alto del torneado sin escalar. Con la escala, queda al costado sin cruzar la ficha. */
+export const ROBBER_FOOT_LOCAL = 0.2;
+export const ROBBER_SCALE = 2.08;
+export const ROBBER_FOOT_R = ROBBER_FOOT_LOCAL * ROBBER_SCALE;
+/** Alto del torneado sin escalar. */
 export const ROBBER_H = 0.5;
-/**
- * Semitransparente: en un ángulo rasante el peón puede cruzar la ficha, y el número
- * y el terreno se siguen leyendo a través.
- */
-export const ROBBER_OPACITY = 0.7;
-/** Aire entre el pie y la arista, para no pisar el camino. */
-const ROBBER_EDGE_GAP = 0.075;
+/** Cara impresa (círculo del atlas), no sólo el glifo. El pie la tapa entera. */
+export const ROBBER_NUMBER_R = TOKEN_R * 0.93;
 
 /**
- * Costado este de la loseta, lejos del centro. El mismo lugar con ficha o en el desierto:
- * el número y el terreno quedan libres aunque se dé vuelta la cámara.
+ * Centro de la loseta, encima de la ficha. El mismo lugar con número o en el desierto.
  */
 export function robberSpot(hex: { q: number; r: number; number?: number | null }): THREE.Vector2 {
   const p = hexToPixel(hex.q, hex.r, S);
-  const apothem = (S * Math.sqrt(3)) / 2;
-  const d = apothem - ROBBER_EDGE_GAP - ROBBER_FOOT_R;
-  return new THREE.Vector2(p.x + d, p.y);
+  return new THREE.Vector2(p.x, p.y);
 }
 
 /**
- * ¿El cilindro del peón cruza algún rayo de la cámara hacia la ficha?
- * Elevación en grados sobre el horizonte. Sirve para fijar escala y costado.
+ * ¿El pie tapa el número desde esta elevación de cámara (grados sobre el horizonte)?
+ * El disco del pie cubre el dígito; el cuerpo opaco corta el rayo que sale de ese punto.
  */
 export function robberCoversToken(elevationDeg: number): boolean {
   const spot = robberSpot({ q: 0, r: 0, number: 8 });
@@ -65,19 +58,20 @@ export function robberCoversToken(elevationDeg: number): boolean {
   const cz = spot.y - center.y;
   const rf = ROBBER_FOOT_R;
   const h = ROBBER_H * ROBBER_SCALE;
-  const tokenY = TILE_TOP + TOKEN_H;
+  const baseY = TILE_TOP + TOKEN_H;
   const el = (elevationDeg * Math.PI) / 180;
-  const rings = [0, TOKEN_R * 0.55, TOKEN_R];
-  for (let ai = 0; ai < 36; ai++) {
-    const az = (ai / 36) * Math.PI * 2;
+  const rings = [0, ROBBER_NUMBER_R * 0.55, ROBBER_NUMBER_R];
+  for (let ai = 0; ai < 24; ai++) {
+    const az = (ai / 24) * Math.PI * 2;
     const ux = Math.sin(az) * Math.cos(el);
     const uy = Math.sin(el);
     const uz = Math.cos(az) * Math.cos(el);
-    for (let k = 0; k < 12; k++) {
-      const a = (k / 12) * Math.PI * 2;
+    for (let k = 0; k < 10; k++) {
+      const a = (k / 10) * Math.PI * 2;
       for (const rad of rings) {
         const px = Math.cos(a) * rad;
         const pz = Math.sin(a) * rad;
+        if (Math.hypot(px - cx, pz - cz) > rf - 0.004) return false;
         const ox = px - cx;
         const oz = pz - cz;
         const A = ux * ux + uz * uz;
@@ -85,17 +79,18 @@ export function robberCoversToken(elevationDeg: number): boolean {
         const C = ox * ox + oz * oz - rf * rf;
         if (A < 1e-8) continue;
         const disc = B * B - 4 * A * C;
-        if (disc < 0) continue;
+        if (disc < 0) return false;
         const s = Math.sqrt(disc);
-        for (const t of [(-B - s) / (2 * A), (-B + s) / (2 * A)]) {
-          if (t <= 0.002) continue;
-          const y = tokenY + t * uy;
-          if (y >= -0.001 && y <= h + 0.001) return true;
-        }
+        const hits = [(-B - s) / (2 * A), (-B + s) / (2 * A)].filter((t) => t > 0.002);
+        const blocked = hits.some((t) => {
+          const y = baseY + t * uy;
+          return y >= baseY - 0.001 && y <= baseY + h + 0.001;
+        });
+        if (!blocked) return false;
       }
     }
   }
-  return false;
+  return true;
 }
 export const CAVITY_R = 0.48;
 export const VERTEX_CLEAR_R = 0.22;

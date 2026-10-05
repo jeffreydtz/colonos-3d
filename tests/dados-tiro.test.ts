@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import { DIE_SIZE, FACE_NORMAL, diePipsGeometry, quatForFace } from "../src/three/dice/dieGeo.ts";
@@ -105,6 +106,25 @@ describe("tirada física compartida", () => {
         expect(gap).toBeGreaterThan(DIE_SIZE * 0.9);
       }
     }
+  });
+
+  it("cae con peso: un salto corto y deja de girar antes de los 1,6 s", () => {
+    const clip = planThrow({ seed: 42, values: [4, 3], tray });
+    const rest = felt + DIE_SIZE / 2;
+    const peak = Math.max(...clip.a.map((s) => s.py), ...clip.b.map((s) => s.py));
+    expect(peak).toBeLessThan(rest + 0.55);
+    expect(clip.settleAt).toBeLessThan(1.6);
+    for (const die of [clip.a, clip.b]) {
+      const late = die.filter((s) => s.t >= clip.settleAt);
+      expect(late.length).toBeGreaterThan(4);
+      for (const s of late) expect(s.py).toBeLessThan(rest + 0.06);
+      const a = die.at(-8)!;
+      const b = die.at(-1)!;
+      expect(quatOf(a).angleTo(quatOf(b))).toBeLessThan(0.2);
+    }
+    const rig = readFileSync("src/three/dice/DiceRig.tsx", "utf8");
+    expect(rig).toContain("reduceMotion()");
+    expect(rig).toContain("poseRest");
   });
 
   it("muestrear entre frames no teletransporta", () => {

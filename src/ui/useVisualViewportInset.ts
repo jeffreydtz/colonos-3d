@@ -9,6 +9,7 @@ export function useVisualViewportInset(): number {
     const sync = () => {
       const inset = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
       setKb(inset);
+      document.documentElement.style.setProperty("--vv-bottom", `${inset}px`);
     };
     vv.addEventListener("resize", sync);
     vv.addEventListener("scroll", sync);
@@ -18,6 +19,7 @@ export function useVisualViewportInset(): number {
       vv.removeEventListener("resize", sync);
       vv.removeEventListener("scroll", sync);
       window.removeEventListener("resize", sync);
+      document.documentElement.style.removeProperty("--vv-bottom");
     };
   }, []);
   return kb;
