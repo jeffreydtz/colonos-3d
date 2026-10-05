@@ -30,6 +30,7 @@ import { ProductionSparks, RobberPuff } from "./vfx/Sparks";
 import { ProducerGlow } from "./vfx/ProducerGlow";
 import { CAM_CLASSIC, CAM_EXPANSION, CAM_FOV } from "./geo";
 import { boardLayout, framing } from "./layout";
+import { ownRobberToast } from "../play/phaseCue";
 
 type Spot = { id: string; x: number; y: number };
 
@@ -68,6 +69,15 @@ export function BoardScene({ view }: { view: ClientView }) {
   }
 
   async function onVertex(id: string) {
+    const robberNote = ownRobberToast(
+      view.phase,
+      view.currentPlayerId === view.youId,
+      view.legal.stealFrom.length > 0,
+    );
+    if (robberNote) {
+      set({ toast: robberNote });
+      return;
+    }
     if (view.phase === "colocacion_camino") {
       set({ toast: "Ahora el camino: tocá una arista del poblado, no otra casita." });
       return;
@@ -88,6 +98,15 @@ export function BoardScene({ view }: { view: ClientView }) {
   }
 
   async function onEdge(id: string) {
+    const robberNote = ownRobberToast(
+      view.phase,
+      view.currentPlayerId === view.youId,
+      view.legal.stealFrom.length > 0,
+    );
+    if (robberNote) {
+      set({ toast: robberNote });
+      return;
+    }
     if (view.phase === "colocacion_poblado") {
       set({ toast: "Primero el poblado: tocá un vértice libre. El camino viene después." });
       return;

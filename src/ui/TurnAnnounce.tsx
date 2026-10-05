@@ -54,27 +54,27 @@ export function TurnAnnounce({ view }: { view: ClientView }) {
   if (view.winnerId) return null;
 
   return (
-    <div className="pointer-events-none flex justify-center px-2 pt-2">
+    <div className="pointer-events-none flex justify-center px-2 pt-1 lg:pt-2">
       {cue ? (
         <div
           key={`${view.currentPlayerId}:${view.phase}:${actorBuildings}`}
-          className="w-full max-w-lg rounded-2xl border-2 bg-[#140d09]/92 px-4 py-3 text-center shadow-lg"
+          className="w-full max-w-lg rounded-xl border bg-[#140d09]/92 px-2.5 py-1 text-center shadow-md lg:rounded-2xl lg:border-2 lg:px-4 lg:py-3 lg:shadow-lg"
           style={{ borderColor: color }}
           data-testid="setup-banner"
           role="status"
         >
-          <p className="display text-xl font-semibold text-amber-50 md:text-2xl">{cue.title}</p>
-          <p className="mt-1 text-sm text-amber-100/85">{cue.detail}</p>
+          <p className="display text-sm font-semibold leading-tight text-amber-50 lg:text-2xl">{cue.title}</p>
+          <p className="mt-0.5 text-[11px] leading-snug text-amber-100/80 lg:mt-1 lg:text-sm">{cue.detail}</p>
         </div>
       ) : (
         flash && (
           <div
-            className="w-full max-w-md rounded-2xl border-2 bg-[#140d09]/92 px-4 py-3 text-center shadow-lg"
+            className="w-full max-w-sm rounded-xl border bg-[#140d09]/92 px-2.5 py-1 text-center shadow-md lg:max-w-md lg:rounded-2xl lg:border-2 lg:px-4 lg:py-3 lg:shadow-lg"
             style={{ borderColor: color }}
             data-testid="turn-announce"
             role="status"
           >
-            <p className="display text-2xl font-semibold md:text-3xl" style={{ color }}>
+            <p className="display text-base font-semibold leading-none lg:text-3xl" style={{ color }}>
               {flash}
             </p>
           </div>

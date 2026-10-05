@@ -22,3 +22,9 @@ export function dockLabel(phase: string, yourTurn: boolean, name: string): strin
       return "Tu turno";
   }
 }
+
+/** Aviso al tocar una pieza cuando te toca mover el ladrón y todavía no elegiste a quién robar. */
+export function ownRobberToast(phase: string, yourTurn: boolean, stealing: boolean): string | null {
+  if (phase === "ladron" && yourTurn && !stealing) return "Después de mover el ladrón";
+  return null;
+}

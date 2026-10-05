@@ -435,8 +435,9 @@ export function Hud({ view }: { view: ClientView }) {
         </div>
       )}
 
+      <div className="relative z-20 shrink-0">
       <div
-        className="pointer-events-auto relative z-20 flex h-14 items-center gap-2 px-2 md:h-16 md:px-3"
+        className="pointer-events-auto flex h-14 items-center gap-2 px-2 md:h-16 md:px-3"
         data-hud-edge="top"
       >
         {sfxOn && !sfxUnlocked && (
@@ -487,20 +488,49 @@ export function Hud({ view }: { view: ClientView }) {
             onClick={() => setSettingsOpen(!settingsOpen)}
           />
         </div>
+      </div>
 
-        {settingsOpen && (
-          <>
-            <button
-              className="pointer-events-auto fixed inset-0 z-30 cursor-default"
-              aria-label="Cerrar ajustes"
-              onClick={() => setSettingsOpen(false)}
+      <div className="pointer-events-auto relative px-2 md:px-3 lg:pr-[19.5rem]">
+        {/* 5–6 asientos en un celu: dos filas de tres chips de una línea, así nombre, BOT, cartas y puntos entran sin cortarse. */}
+        <div
+          className={`grid gap-1 ${manySeats ? `grid-cols-3 ${view.players.length === 5 ? "sm:grid-cols-5" : "sm:grid-cols-6"}` : ""}`}
+          style={manySeats ? undefined : { gridTemplateColumns: `repeat(${view.players.length}, minmax(0, 1fr))` }}
+          data-testid="seat-chips"
+          data-hud-edge="top"
+        >
+          {view.players.map((p, i) => (
+            <SeatChip
+              key={p.id}
+              p={p}
+              i={i}
+              view={view}
+              inline={manySeats}
+              cards={heldGains ? countAfterHold(p.resourceCount, heldGains.get(p.id)) : undefined}
             />
-            <div
-              className="panel panel-solid pointer-events-auto fixed inset-x-2 top-14 z-40 flex max-h-[70vh] flex-col gap-1.5 overflow-y-auto rounded-2xl p-2 md:inset-x-3 md:top-16 lg:inset-x-auto lg:left-3 lg:w-80"
-              data-testid="settings-panel"
-              role="dialog"
-              aria-label="Opciones"
-            >
+          ))}
+        </div>
+        {mesaOpen && (
+          <div
+            aria-hidden
+            data-testid="chip-fade"
+            className="pointer-events-none absolute inset-y-0 right-[19.5rem] hidden w-6 bg-gradient-to-l from-[#071824]/60 to-transparent lg:block"
+          />
+        )}
+      </div>
+
+      {settingsOpen && (
+        <>
+          <button
+            className="pointer-events-auto fixed inset-0 z-30 cursor-default"
+            aria-label="Cerrar ajustes"
+            onClick={() => setSettingsOpen(false)}
+          />
+          <div
+            className="panel panel-solid pointer-events-auto absolute inset-x-2 top-full z-40 mt-1 flex max-h-[min(28rem,calc(100dvh-22rem))] flex-col gap-1.5 overflow-y-auto rounded-2xl p-2 md:inset-x-3 lg:inset-x-auto lg:left-3 lg:w-80"
+            data-testid="settings-panel"
+            role="dialog"
+            aria-label="Opciones"
+          >
               <button
                 className={SETTING_ROW}
                 onClick={() => {
@@ -612,44 +642,12 @@ export function Hud({ view }: { view: ClientView }) {
         data-hud-edge="right"
         data-testid="score-column"
       >
-        <Scoreboard view={view} layout="column" />
+        <Scoreboard view={view} />
         {mesaOpen && (
           <div className="flex min-h-0 flex-1 flex-col" data-testid="mesa-panel">
             <MesaPanel view={view} onClose={() => set({ mesaOpen: false })} closeTestId="mesa-close" />
           </div>
         )}
-      </div>
-
-      <div className="pointer-events-auto relative px-2 md:px-3 lg:pr-[19.5rem]">
-        {/* 5–6 asientos en un celu: dos filas de tres chips de una línea, así nombre, BOT, cartas y puntos entran sin cortarse. */}
-        <div
-          className={`grid gap-1 ${manySeats ? `grid-cols-3 ${view.players.length === 5 ? "sm:grid-cols-5" : "sm:grid-cols-6"}` : ""}`}
-          style={manySeats ? undefined : { gridTemplateColumns: `repeat(${view.players.length}, minmax(0, 1fr))` }}
-          data-testid="seat-chips"
-          data-hud-edge="top"
-        >
-          {view.players.map((p, i) => (
-            <SeatChip
-              key={p.id}
-              p={p}
-              i={i}
-              view={view}
-              inline={manySeats}
-              cards={heldGains ? countAfterHold(p.resourceCount, heldGains.get(p.id)) : undefined}
-            />
-          ))}
-        </div>
-        {mesaOpen && (
-          <div
-            aria-hidden
-            data-testid="chip-fade"
-            className="pointer-events-none absolute inset-y-0 right-[19.5rem] hidden w-6 bg-gradient-to-l from-[#071824]/60 to-transparent lg:block"
-          />
-        )}
-      </div>
-
-      <div className="lg:hidden">
-        <Scoreboard view={view} layout="row" />
       </div>
 
       <div className="min-h-0 flex-1">
