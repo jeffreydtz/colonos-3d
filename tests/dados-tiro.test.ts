@@ -89,7 +89,7 @@ describe("tirada física compartida", () => {
           const prev = die.at(-2)!;
           const up = facePointingUp(quatOf(last));
           expect(up.face, `${d1}+${d2}`).toBe(value);
-          expect(up.dot, `${d1}+${d2}`).toBeGreaterThan(0.99);
+          expect(up.dot, `${d1}+${d2}`).toBeGreaterThan(0.999);
           expect(last.py - DIE_SIZE / 2, `${d1}+${d2}`).toBeGreaterThan(felt - 0.02);
           expect(Math.hypot(last.px - prev.px, last.py - prev.py, last.pz - prev.pz)).toBeLessThan(0.05);
           const qDelta = quatOf(prev).angleTo(quatOf(last));

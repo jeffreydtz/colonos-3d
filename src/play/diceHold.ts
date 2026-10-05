@@ -28,6 +28,18 @@ export function skipDiceHold(ui: DiceUi): DiceUi {
   return { ...ui, revealed: true, presenting: false };
 }
 
+/**
+ * El número del HUD aparece cuando los dados ya apoyaron, no al cumplir los 3,2 s.
+ * `presenting` sigue hasta el tope para no cortar la pose; el cartel «en el aire» mira `revealed`.
+ */
+export const DICE_SETTLE_PAD_S = 0.1;
+
+export function revealSettled(ui: DiceUi, elapsedS: number, settleAtS: number): DiceUi {
+  if (!diceHeld(ui)) return ui;
+  if (elapsedS < settleAtS + DICE_SETTLE_PAD_S) return ui;
+  return { ...ui, revealed: true };
+}
+
 /** Lo cobrado en eventos de dados que todavía no se pueden mostrar. */
 export function gainsWhileHeld(events: LogEvent[], holdFromEventId: number): Map<string, Partial<Resources>> {
   const map = new Map<string, Partial<Resources>>();

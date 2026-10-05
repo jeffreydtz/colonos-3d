@@ -798,12 +798,12 @@ export function Hud({ view }: { view: ClientView }) {
         style={kb ? { transform: `translateY(-${kb}px)` } : undefined}
       >
         {sheet === "build" && (
-          <Sheet label="Construir y comerciar">
+          <Sheet label="Construir y comerciar" onClose={() => set({ sheet: null })}>
             <ActionPanel view={view} compact onClose={() => set({ sheet: null })} closeTestId="sheet-close" />
           </Sheet>
         )}
         {sheet === "mesa" && (
-          <Sheet label="Registro y chat">
+          <Sheet label="Registro y chat" onClose={() => set({ sheet: null })}>
             <div className="flex h-[min(46vh,26rem)] max-h-[calc(100dvh-16rem)] min-h-0 flex-col">
               <MesaPanel view={view} compact onClose={() => set({ sheet: null })} closeTestId="sheet-close" />
             </div>
@@ -1148,14 +1148,42 @@ function DockBtn({
   );
 }
 
-/** Hoja del celu: el contenido trae sus pestañas y la cruz, y scrollea por dentro sin perderlas. */
-function Sheet({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="relative z-20 lg:hidden" data-testid="mobile-sheet" role="region" aria-label={label}>
-      <div className="panel panel-solid flex max-h-[min(58dvh,30rem)] min-h-0 flex-col rounded-t-3xl px-3 pt-2 pb-2">
-        {children}
-      </div>
+/**
+ * Hoja del celu (Construir / Banco / Mesa). En el teléfono sale al body, igual que el 4:1,
+ * para quedar por encima de la barra del navegador (`--vv-bottom`) y del área segura.
+ */
+function Sheet({ label, children, onClose }: { label: string; children: ReactNode; onClose: () => void }) {
+  const phone = usePhoneLayout();
+  const panel = (
+    <div
+      className="panel panel-solid flex max-h-[min(58dvh,calc(100dvh-var(--vv-bottom,0px)-6rem))] min-h-0 flex-col overflow-y-auto rounded-t-3xl px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+      data-testid="mobile-sheet"
+      role="dialog"
+      aria-label={label}
+    >
+      {children}
     </div>
+  );
+  if (!phone || typeof document === "undefined") {
+    return <div className="relative z-20 lg:hidden">{panel}</div>;
+  }
+  return createPortal(
+    <div className="pointer-events-auto fixed inset-0 z-[80]" data-testid="mobile-sheet-layer">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/45"
+        aria-label="Cerrar"
+        data-testid="mobile-sheet-dismiss"
+        onClick={onClose}
+      />
+      <div
+        className="absolute inset-x-0 z-10"
+        style={{ bottom: "calc(var(--vv-bottom, 0px) + max(0.75rem, env(safe-area-inset-bottom)))" }}
+      >
+        {panel}
+      </div>
+    </div>,
+    document.body,
   );
 }
 

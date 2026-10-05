@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, type RefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { playDiceHit, playSfx, reduceMotion } from "../../audio/sfx";
-import { diceHeld, skipDiceHold } from "../../play/diceHold";
+import { diceHeld, revealSettled, skipDiceHold } from "../../play/diceHold";
 import { useApp } from "../../store";
 import { useDispose } from "../dispose";
 import { feltAlbedo } from "../procTextures";
@@ -155,9 +155,14 @@ export function DiceRig({
     }
     prevAy.current = sa.py;
     prevBy.current = sb.py;
-    if (!settledSfx.current && t >= clip.settleAt) {
-      settledSfx.current = true;
-      playSfx("dice_settle");
+    if (t >= clip.settleAt) {
+      if (!settledSfx.current) {
+        settledSfx.current = true;
+        playSfx("dice_settle");
+      }
+      const ui = useApp.getState().diceUi;
+      const next = revealSettled(ui, t, clip.settleAt);
+      if (next !== ui) useApp.getState().set({ diceUi: next });
     }
   });
 

@@ -1,6 +1,6 @@
 import * as CANNON from "cannon-es";
 import * as THREE from "three";
-import { DIE_SIZE, FACE_NORMAL } from "./dieGeo";
+import { DIE_SIZE, FACE_NORMAL, quatForFace } from "./dieGeo";
 
 /** Altura del paño respecto del centro de la bandeja de madera. Igual que el mesh. */
 export const FELT_LIFT = 0.055;
@@ -135,7 +135,7 @@ function simulate(seed: number, tray: [number, number, number]): Sim {
       material: ivory,
       shape: new CANNON.Box(new CANNON.Vec3(HALF, HALF, HALF)),
       linearDamping: 0.22,
-      angularDamping: 0.48,
+      angularDamping: 0.74,
       allowSleep: false,
     });
     const spin = new THREE.Quaternion().setFromEuler(
@@ -149,7 +149,7 @@ function simulate(seed: number, tray: [number, number, number]): Sim {
     b.quaternion.set(spin.x, spin.y, spin.z, spin.w);
     // Rodar hacia adelante, casi sin impulso hacia arriba: caen, no flotan.
     b.velocity.set((rng() - 0.5) * 0.45, -0.15 - rng() * 0.2, 0.7 + rng() * 0.45);
-    b.angularVelocity.set((rng() - 0.5) * 6, (rng() - 0.5) * 5, (rng() - 0.5) * 6);
+    b.angularVelocity.set((rng() - 0.5) * 4.2, (rng() - 0.5) * 3.4, (rng() - 0.5) * 4.2);
     world.addBody(b);
     return b;
   };
@@ -201,6 +201,41 @@ function simulate(seed: number, tray: [number, number, number]): Sim {
   return { a, b, framesA, framesB, posA, posB, hits, feltY, score, ok };
 }
 
+/** Deja la cara del servidor exactamente hacia arriba, conservando el rumbo del dado. */
+function levelFace(sample: DieSample, value: number): THREE.Quaternion {
+  const q = new THREE.Quaternion(sample.qx, sample.qy, sample.qz, sample.qw);
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+  if (up.y > 0.45) {
+    const corr = new THREE.Quaternion().setFromUnitVectors(up, new THREE.Vector3(0, 1, 0));
+    return corr.multiply(q).normalize();
+  }
+  const axis = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+  axis.y = 0;
+  const yaw = axis.lengthSq() > 1e-6 ? Math.atan2(axis.x, axis.z) : 0;
+  return quatForFace(value, yaw);
+}
+
+const PLANT_S = 0.16;
+
+function plantFaces(frames: DieSample[], value: number, settleAt: number): void {
+  const endT = frames[frames.length - 1]?.t ?? 0;
+  const start = Math.max(0, Math.min(settleAt, endT - PLANT_S));
+  const origin = frames.find((s) => s.t >= start) ?? frames[0];
+  if (!origin) return;
+  const target = levelFace(origin, value);
+  const span = Math.max(1e-4, endT - start);
+  for (const sample of frames) {
+    if (sample.t < start) continue;
+    const u = Math.min(1, (sample.t - start) / span);
+    const k = u * u * (3 - 2 * u);
+    const q = new THREE.Quaternion(sample.qx, sample.qy, sample.qz, sample.qw).slerp(target, k);
+    sample.qx = q.x;
+    sample.qy = q.y;
+    sample.qz = q.z;
+    sample.qw = q.w;
+  }
+}
+
 function clipFrom(sim: Sim, values: [number, number]): ThrowClip {
   const offA = faceOffset(bodyQuat(sim.a.quaternion), values[0]);
   const offB = faceOffset(bodyQuat(sim.b.quaternion), values[1]);
@@ -231,6 +266,10 @@ function clipFrom(sim: Sim, values: [number, number]): ThrowClip {
       break;
     }
   }
+  // El giro constante deja la cara del servidor arriba, pero si el cuerpo quedó
+  // un poco de canto se lee el costado. Al asentar, el cuaternión se endereza.
+  plantFaces(a, values[0], settleAt);
+  plantFaces(b, values[1], settleAt);
   return {
     duration: a[a.length - 1]!.t,
     settleAt,

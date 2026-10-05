@@ -19,5 +19,15 @@ describe("cambio 4:1 desde abajo del navegador", () => {
     const quick = hud.slice(hud.indexOf("function BankQuick"), hud.indexOf("function HandStrip"));
     expect(quick).toContain("fixed inset-0");
     expect(quick).toContain("z-[80]");
+    const sheet = hud.slice(hud.indexOf("function Sheet"), hud.indexOf("function StealSheet"));
+    expect(sheet).toContain("createPortal");
+    expect(sheet).toContain('data-testid="mobile-sheet-dismiss"');
+    expect(sheet).toContain("var(--vv-bottom, 0px)");
+    expect(sheet).toContain("env(safe-area-inset-bottom)");
+    expect(sheet).toContain("fixed inset-0");
+    expect(sheet).toContain("z-[80]");
+    const bank = readFileSync("src/ui/ActionPanel.tsx", "utf8");
+    expect(bank).toContain('data-testid="bank-submit"');
+    expect(bank).toContain("Cambiar");
   });
 });

@@ -11,6 +11,7 @@ import {
   gainsWhileHeld,
   resourcesAfterHold,
   rollGainsFor,
+  revealSettled,
   skipDiceHold,
 } from "../src/play/diceHold.ts";
 function ev(partial: Partial<LogEvent> & Pick<LogEvent, "id" | "kind">): LogEvent {
@@ -45,6 +46,21 @@ describe("dados: la mano, el log y las cartas no adelantan el resultado", () => 
     expect(resourcesAfterHold(full({ ladrillo: 3, mineral: 2, madera: 1 }), gains.get("p0"))).toEqual(full({ madera: 1 }));
     expect(countAfterHold(4, gains.get("p1"))).toBe(3);
     expect(eventsWhileHeld(events, ui).map((e) => e.id)).toEqual([4]);
+  });
+
+  it("el HUD suelta «en el aire» cuando los dados apoyan, sin esperar los 3,2 s", () => {
+    const ui = beginDiceHold({ events, rollNo: 3 });
+    const early = revealSettled(ui, 0.4, 1.1);
+    expect(early).toBe(ui);
+    expect(diceHeld(early)).toBe(true);
+    const shown = revealSettled(ui, 1.25, 1.1);
+    expect(shown.revealed).toBe(true);
+    expect(shown.presenting).toBe(true);
+    expect(diceHeld(shown)).toBe(false);
+    expect(revealSettled(shown, 2, 1.1)).toBe(shown);
+    const rig = readFileSync("src/three/dice/DiceRig.tsx", "utf8");
+    expect(rig).toContain("revealSettled");
+    expect(rig).toContain("clip.settleAt");
   });
 
   it("al revelar (o saltear) se ve todo, incluido quien reconecta sin fx", () => {
