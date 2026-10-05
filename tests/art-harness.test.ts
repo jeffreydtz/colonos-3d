@@ -29,5 +29,8 @@ describe("art harness fixtures", () => {
     const v = buildArtView("S5-victoria", 42);
     expect(v.winnerId).toBe(v.youId);
     expect(v.phase).toBe("fin");
+    expect(v.hand.totalVp).toBeGreaterThanOrEqual(v.victoryPoints);
+    const you = v.players.find((p) => p.id === v.youId);
+    expect(you?.visibleVp).toBe(v.hand.totalVp);
   });
 });

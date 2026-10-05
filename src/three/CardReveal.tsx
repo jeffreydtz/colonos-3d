@@ -6,9 +6,7 @@ import { useApp } from "../store";
 import { Deadline } from "../ui/Deadline";
 import { DevIcon } from "../ui/icons/GameIcon";
 
-/** Cuánto queda el sobre cerrado a la vista del resto de la mesa. */
-export const SPECTATOR_HOLD_MS = 3500;
-/** Sobre cerrado, después se abre y sube la carta, después gira. Un toque adelanta el paso. */
+/** El dorso se abre, sube la carta y gira. Un toque adelanta el paso. Sólo lo ve quien compró. */
 const OPEN_AFTER_MS = 650;
 const FLIP_AFTER_MS = 700;
 
@@ -47,28 +45,6 @@ const ART: Record<DevKind, { title: string; subtitle: string; hue: string; accen
   },
 };
 
-function playWhoosh(on: boolean) {
-  if (!on || typeof window === "undefined") return;
-  try {
-    const ctx = new AudioContext();
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = "triangle";
-    o.frequency.setValueAtTime(180, ctx.currentTime);
-    o.frequency.exponentialRampToValueAtTime(620, ctx.currentTime + 0.45);
-    g.gain.setValueAtTime(0.0001, ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.08);
-    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.7);
-    o.connect(g);
-    g.connect(ctx.destination);
-    o.start();
-    o.stop(ctx.currentTime + 0.72);
-    window.setTimeout(() => void ctx.close(), 900);
-  } catch {
-    /* audio opcional */
-  }
-}
-
 function HexMark() {
   return (
     <svg viewBox="0 0 40 44" className="h-12 w-11" aria-hidden>
@@ -81,14 +57,12 @@ function HexMark() {
 export function CardReveal({
   kind,
   owner,
-  playerName,
   onClose,
   sfx,
   deadlineAt,
 }: {
   kind: DevKind | null;
   owner: boolean;
-  playerName?: string;
   onClose: () => void;
   sfx: boolean;
   deadlineAt?: number | null;
@@ -96,25 +70,18 @@ export function CardReveal({
   const [stage, setStage] = useState<Stage>("sealed");
   const spec = kind ? ART[kind] : null;
   const closeRef = useRef(onClose);
-  const sfxRef = useRef(sfx);
 
   useEffect(() => {
     closeRef.current = onClose;
-    sfxRef.current = sfx;
-  }, [onClose, sfx]);
+  }, [onClose]);
 
   useEffect(() => {
-    if (owner) {
-      void setBusy(true);
-      return;
-    }
-    const t = window.setTimeout(() => closeRef.current(), SPECTATOR_HOLD_MS);
-    return () => window.clearTimeout(t);
+    if (!owner) return;
+    void setBusy(true);
   }, [owner]);
 
   useEffect(() => {
     if (!owner || stage === "front") return;
-    if (stage === "open") playWhoosh(sfxRef.current);
     const t = window.setTimeout(
       () => setStage(stage === "sealed" ? "open" : "front"),
       stage === "sealed" ? OPEN_AFTER_MS : FLIP_AFTER_MS,
@@ -151,13 +118,14 @@ export function CardReveal({
 
   const opened = owner && stage !== "sealed";
   const flipped = owner && stage === "front";
+  if (!owner) return null;
 
   return createPortal(
     <div
       className="pointer-events-auto fixed inset-0 z-[80] flex flex-col items-center justify-center overflow-hidden bg-black/90 p-4"
       onClick={close}
       role="presentation"
-      data-testid={owner ? "unbox-owner" : "unbox-spectator"}
+      data-testid="unbox-owner"
       data-stage={owner ? stage : "sealed"}
     >
       {deadlineAt ? (
@@ -230,9 +198,7 @@ export function CardReveal({
           <div className="reveal-pack-body">
             <HexMark />
             <p className="display text-2xl text-amber-100">Colonos</p>
-            <p className="text-xs text-amber-100/80">
-              {owner ? "Carta de desarrollo" : `${playerName ?? "Alguien"} compró una carta`}
-            </p>
+            <p className="text-xs text-amber-100/80">Carta de desarrollo</p>
             <div className="foil-sheen h-1.5 w-24 rounded-full" />
           </div>
         </div>
@@ -247,37 +213,26 @@ export function CardReveal({
         ) : (
           <>
             <p className="display text-xl text-amber-50" data-testid="unbox-title">
-              {owner ? "Carta nueva" : "Sobre cerrado"}
+              Carta nueva
             </p>
-            <p className="max-w-xs text-center text-sm text-amber-100/80">
-              {owner
-                ? "Sólo vos ves el frente."
-                : "El comprador está abriendo su carta. El frente es sólo para esa persona."}
-            </p>
+            <p className="max-w-xs text-center text-sm text-amber-100/80">Sólo vos ves el frente.</p>
           </>
         )}
-        {owner && (
-          <div className="mt-1 flex gap-2">
-            <button
-              className="min-h-11 rounded-xl bg-black/50 px-3 py-2 text-xs text-amber-100"
-              onClick={() => useApp.getState().set({ sfxOn: !sfx })}
-            >
-              {sfx ? "Sonido: activado" : "Sonido: apagado"}
-            </button>
-            <button
-              className="min-h-11 rounded-xl bg-amber-200 px-6 py-2 font-semibold text-stone-900"
-              data-testid="unbox-next"
-              onClick={advance}
-            >
-              {flipped ? "Seguir" : "Abrir"}
-            </button>
-          </div>
-        )}
-        {!owner && (
-          <button className="min-h-11 rounded-xl bg-amber-200 px-6 py-2 font-semibold text-stone-900" onClick={close}>
-            Seguir
+        <div className="mt-1 flex gap-2">
+          <button
+            className="min-h-11 rounded-xl bg-black/50 px-3 py-2 text-xs text-amber-100"
+            onClick={() => useApp.getState().set({ sfxOn: !sfx })}
+          >
+            {sfx ? "Sonido: activado" : "Sonido: apagado"}
           </button>
-        )}
+          <button
+            className="min-h-11 rounded-xl bg-amber-200 px-6 py-2 font-semibold text-stone-900"
+            data-testid="unbox-next"
+            onClick={advance}
+          >
+            {flipped ? "Seguir" : "Abrir"}
+          </button>
+        </div>
       </div>
     </div>,
     document.body,

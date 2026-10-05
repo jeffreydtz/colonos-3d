@@ -1,21 +1,32 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { SFX_CATEGORIES, SFX_CATEGORY_LABEL } from "../audio/prefs";
 import { countAfterHold, diceHeld, gainsWhileHeld, resourcesAfterHold, skipDiceHold } from "../play/diceHold";
 import { COLOR_HEX, RESOURCE_LABEL } from "@shared/constants";
 import { RESOURCES } from "@shared/types";
 import type { ClientView, PublicPlayer, Resource } from "@shared/types";
+import { previewOrRun } from "../play/commitAction";
+import { pendingStillLegal, saveConfirmActions } from "../play/confirm";
 import { sendAction, exitMesa } from "../socket";
 import { useApp } from "../store";
 import { PLAYER_GLYPHS, THEMES, THEME_LABEL, saveTheme } from "../theme/tokens";
 import { saveGraphicsMode } from "../three/graphics";
 import { offersForYou, tradeTabFor } from "../play/actionTabs";
+import { stealNoticeForYou } from "../play/stealNotice";
 import { dockLabel } from "../play/phaseCue";
+import { shownPoints, winnerShownPoints } from "../play/shownPoints";
+import { handCaption } from "../play/publicHand";
+import { PublicHand } from "./PublicHand";
 import { ActionPanel } from "./ActionPanel";
-import { Deadline } from "./Deadline";
 import { BagIcons, RateTag, ResourceIcon, ResourcePick, rateTip, settlementPortRate } from "./icons/GameIcon";
 import { MesaPanel } from "./MesaPanel";
 import { ProductionFly } from "./ProductionFly";
 import { PieceIcon } from "./PieceIcon";
+import { ConfirmBar } from "./ConfirmBar";
 import { Hotkeys, ShortcutsHelp } from "./Hotkeys";
+import { FocusTrap } from "./useFocusTrap";
+import { Scoreboard } from "./Scoreboard";
+import { TurnAnnounce } from "./TurnAnnounce";
+import { TurnClock } from "./TurnClock";
 import { useVisualViewportInset } from "./useVisualViewportInset";
 
 const PHASE_YOURS: Record<string, string> = {
@@ -25,7 +36,7 @@ const PHASE_YOURS: Record<string, string> = {
   descarte: "Hay que descartar: más de 7 cartas no va.",
   ladron: "Mové el ladrón a otro hexágono.",
   principal: "Construí, comerciá o pasá el turno.",
-  construccion_especial: "Pausa de construcción: sólo obras y cartas.",
+  construccion_especial: "Pausa de construcción: sólo caminos, poblados y ciudades.",
   fin: "Se terminó la partida.",
 };
 
@@ -57,6 +68,15 @@ function phaseLine(view: ClientView, yourTurn: boolean, currentName: string): st
   }
   if (view.phase === "ladron" && view.legal.stealFrom.length > 0 && yourTurn) {
     return "Elegí a quién le afanás.";
+  }
+  if (yourTurn && view.phase === "colocacion_poblado") {
+    const n = view.buildings.filter((b) => b.playerId === view.youId).length;
+    return n > 0
+      ? "Segundo poblado: sólo la casita. El camino viene después."
+      : "Primer paso: poné un poblado. El camino es el siguiente.";
+  }
+  if (yourTurn && view.phase === "colocacion_camino") {
+    return "Ahora el camino, pegado a ese poblado. Recién después pasa el turno.";
   }
   if (yourTurn) return PHASE_YOURS[view.phase] ?? "Te toca.";
   return `${currentName} ${PHASE_OTHERS[view.phase] ?? "está jugando."}`;
@@ -104,14 +124,6 @@ function IconExit() {
   );
 }
 
-function CardGlyph() {
-  return (
-    <svg viewBox="0 0 10 12" className="h-2.5 w-2 shrink-0" aria-hidden>
-      <rect x="0.6" y="0.6" width="8.8" height="10.8" rx="1.4" fill="#f4e4c1" stroke="#2b1d14" strokeWidth="1.1" />
-    </svg>
-  );
-}
-
 const SETTING_ROW = "min-h-10 rounded-xl bg-black/30 px-3 text-left text-xs font-semibold text-amber-100 hover:bg-black/45";
 
 function SeatChip({
@@ -132,17 +144,17 @@ function SeatChip({
   const tint = COLOR_HEX[p.color];
   const glyph = PLAYER_GLYPHS[i % PLAYER_GLYPHS.length];
   const cardCount = cards ?? p.resourceCount;
-  const layout = inline
-    ? "flex-row items-center gap-1.5 px-1.5"
-    : "flex-col justify-center gap-[3px] px-1 sm:flex-row sm:items-center sm:gap-1.5 sm:px-2";
+  const hand = handCaption(cardCount, p.devCount, p.knightsPlayed, p.hasLargestArmy);
+  const layout = inline ? "gap-0.5 px-1.5" : "gap-[3px] px-1 sm:px-2";
   return (
     <div
-      className={`panel flex min-w-0 rounded-lg py-1 ${layout} ${
+      className={`panel flex min-w-0 flex-col justify-center rounded-lg py-1 ${layout} ${
         current ? "ring-2 ring-amber-300 bg-amber-200/15" : ""
       } ${you ? "border-amber-200/60" : ""}`}
       data-testid="seat-chip"
+      data-seat={p.id}
       aria-current={current ? "true" : undefined}
-      title={`${glyph} ${p.name}${p.isBot ? " (bot)" : ""} · ${p.visibleVp} puntos · ${p.resourceCount} cartas`}
+      title={`${glyph} ${p.name}${p.isBot ? " (bot)" : ""} · ${p.visibleVp} puntos · ${hand}`}
     >
       <div className="flex min-w-0 items-center gap-[3px] sm:gap-1">
         <span className="hidden h-2 w-2 shrink-0 rounded-full border border-white/40 sm:block" style={{ background: tint }} aria-hidden />
@@ -159,10 +171,10 @@ function SeatChip({
           style={{ color: tint }}
           data-testid={i === 0 ? "chip-name-first" : "chip-name"}
         >
-          {you ? "Vos" : p.name}
+          {you ? `Vos: ${p.name}` : p.name}
         </span>
       </div>
-      <div className={`flex items-center gap-1 text-[10px] leading-none text-amber-100/80 ${inline ? "ml-auto shrink-0" : "min-w-0 sm:ml-auto"}`}>
+      <div className="flex min-w-0 flex-wrap items-center gap-1 text-[10px] leading-none text-amber-100/80">
         {p.isBot && (
           <span
             className="shrink-0 rounded-sm bg-sky-400/20 px-[3px] py-[1px] text-[8px] font-bold uppercase tracking-wide text-sky-300"
@@ -183,14 +195,19 @@ function SeatChip({
             off
           </span>
         )}
-        <span className="inline-flex shrink-0 items-center gap-[2px] tabular-nums" aria-label={`${cardCount} cartas`}>
-          <CardGlyph />
-          {cardCount}
+        <span className="flex min-w-0 flex-1 flex-wrap items-center">
+          <PublicHand
+            dense
+            armyWord={false}
+            resources={cardCount}
+            devs={p.devCount}
+            knights={p.knightsPlayed}
+            largestArmy={p.hasLargestArmy}
+          />
         </span>
-        {(p.hasLongestRoad || p.hasLargestArmy) && (
-          <span className="hidden shrink-0 items-center gap-0.5 lg:inline-flex">
-            {p.hasLongestRoad && <PieceIcon id="premio_camino" />}
-            {p.hasLargestArmy && <PieceIcon id="premio_ejercito" />}
+        {p.hasLongestRoad && (
+          <span className="hidden shrink-0 lg:inline-flex">
+            <PieceIcon id="premio_camino" />
           </span>
         )}
         <span className="ml-auto shrink-0 font-bold tabular-nums text-amber-50" aria-label={`${p.visibleVp} puntos`}>
@@ -238,6 +255,48 @@ function TopButton({
   );
 }
 
+/** Indicador fijo: nombre del que juega, en su color, y el reloj. Va sobre la mano para no tapar el tablero ni el registro. */
+function TurnBar({ view }: { view: ClientView }) {
+  const current = view.players.find((p) => p.id === view.currentPlayerId);
+  const winner = view.winnerId ? view.players.find((p) => p.id === view.winnerId) : undefined;
+  const yourTurn = view.currentPlayerId === view.youId && !view.winnerId;
+  const shown = winner ?? current;
+  const tint = COLOR_HEX[shown?.color ?? "naranja"];
+  const label = winner ? `Ganó ${winner.name}` : yourTurn ? `Vos: ${current?.name ?? "…"}` : (current?.name ?? "…");
+  return (
+    <div
+      className="pointer-events-none bg-[#0b0806] px-2 pt-1.5 pb-1 lg:bg-transparent lg:px-3 lg:pt-0 lg:pr-80 lg:pb-0"
+      data-hud-edge="bottom"
+      data-testid="turn-bar"
+    >
+      <div
+        className="pointer-events-auto flex min-h-14 items-center gap-3 rounded-2xl border-2 bg-[#140d09] px-3 shadow-lg md:px-4"
+        style={{ borderColor: tint }}
+      >
+        <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-white/50" style={{ background: tint }} aria-hidden />
+        <p className="flex min-w-0 flex-1 items-center gap-2" aria-live="polite">
+          <span
+            className="display min-w-0 truncate text-xl font-semibold leading-none md:text-2xl"
+            style={{ color: tint }}
+            data-testid={yourTurn ? "tu-turno" : undefined}
+          >
+            {label}
+          </span>
+          {!view.winnerId && !yourTurn && current?.isBot && (
+            <span
+              className="shrink-0 rounded-sm bg-sky-400/20 px-1 py-[1px] font-sans text-[9px] font-bold uppercase tracking-wide text-sky-300"
+              data-testid="turn-bot"
+            >
+              bot
+            </span>
+          )}
+        </p>
+        {view.deadlineAt && view.phase !== "fin" && !view.winnerId && <TurnClock at={view.deadlineAt} phase={view.phase} />}
+      </div>
+    </div>
+  );
+}
+
 export function Hud({ view }: { view: ClientView }) {
   const set = useApp((s) => s.set);
   const toast = useApp((s) => s.toast);
@@ -252,8 +311,13 @@ export function Hud({ view }: { view: ClientView }) {
   const actionTab = useApp((s) => s.actionTab);
   const diceUi = useApp((s) => s.diceUi);
   const sfxOn = useApp((s) => s.sfxOn);
+  const sfxVolume = useApp((s) => s.sfxVolume);
+  const sfxMute = useApp((s) => s.sfxMute);
+  const sfxUnlocked = useApp((s) => s.sfxUnlocked);
+  const confirmActions = useApp((s) => s.confirmActions);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [confirmExit, setConfirmExit] = useState(false);
+  const stealSeen = useRef<number | null>(null);
   const current = view.players.find((p) => p.id === view.currentPlayerId);
   const yourTurn = view.currentPlayerId === view.youId;
   const manySeats = view.players.length >= 5;
@@ -279,8 +343,20 @@ export function Hud({ view }: { view: ClientView }) {
   }, [confirmExit]);
 
   useEffect(() => {
+    const maxId = view.events.reduce((m, e) => Math.max(m, e.id), 0);
+    if (stealSeen.current == null) {
+      stealSeen.current = maxId;
+      return;
+    }
+    const notice = stealNoticeForYou(view.events, view.youId, stealSeen.current);
+    stealSeen.current = maxId;
+    if (notice) set({ toast: notice });
+  }, [view.events, view.youId, set]);
+
+  useEffect(() => {
     if (!toast) return;
-    const id = window.setTimeout(() => set({ toast: null }), 4500);
+    const ms = typeof toast === "string" ? 4500 : 7000;
+    const id = window.setTimeout(() => set({ toast: null }), ms);
     return () => window.clearTimeout(id);
   }, [toast, set]);
 
@@ -289,6 +365,11 @@ export function Hud({ view }: { view: ClientView }) {
     const id = window.setTimeout(() => set({ hint: null }), 3200);
     return () => window.clearTimeout(id);
   }, [hint, set]);
+
+  useEffect(() => {
+    const p = useApp.getState().pending;
+    if (p && !pendingStillLegal(p, view)) set({ pending: null });
+  }, [view, set]);
 
   function leave() {
     if (!confirmExit) {
@@ -306,6 +387,7 @@ export function Hud({ view }: { view: ClientView }) {
         error: null,
         revealCard: null,
         sheet: null,
+        pending: null,
       });
     });
   }
@@ -313,10 +395,21 @@ export function Hud({ view }: { view: ClientView }) {
   const primary = holdingDice
     ? null
     : view.legal.canRoll
-      ? { label: "Tirar dados", tone: "amber", key: "R", act: () => sendAction({ type: "roll" }) }
+      ? { label: "Tirar dados", tone: "amber" as const, key: "R", act: () => sendAction({ type: "roll" }) }
       : view.legal.canEndTurn
-        ? { label: "Pasar turno", tone: "emerald", key: "P", act: () => sendAction({ type: "end_turn" }) }
+        ? {
+            label: "Pasar turno",
+            tone: "emerald" as const,
+            key: "P",
+            act: () => previewOrRun({ kind: "end_turn" }).then((r) => r ?? { ok: true }),
+          }
         : null;
+  function runPrimary() {
+    if (!primary) return;
+    void primary.act().then((r) => {
+      if (primary.tone === "amber" && !r.ok) set({ toast: r.error ?? "No se pudo." });
+    });
+  }
   const phaseCueLabel = dockLabel(view.phase, yourTurn, current?.name ?? "");
   const phaseCue =
     !holdingDice && !primary && yourTurn && phaseCueLabel !== "Tu turno" && phaseCueLabel !== "Fin"
@@ -342,66 +435,43 @@ export function Hud({ view }: { view: ClientView }) {
         </div>
       )}
 
-      <div className="pointer-events-auto relative z-20 flex items-start gap-2 p-2 md:p-3" data-hud-edge="top">
-        <div
-          className={`panel min-w-0 flex-1 rounded-2xl px-3 py-2 md:max-w-xl md:flex-none md:px-4 md:py-3 ${
-            yourTurn ? "ring-2 ring-amber-300 shadow-[0_0_24px_rgba(232,194,106,0.35)]" : ""
-          }`}
-          data-testid="turn-banner"
-        >
-          <div className="flex items-baseline justify-between gap-2">
-            <p className="display flex min-w-0 items-baseline gap-1.5 text-base font-semibold text-amber-100 md:text-lg" aria-live="polite">
-              <span className="truncate" data-testid={yourTurn && !view.winnerId ? "tu-turno" : undefined}>
-                {view.winnerId
-                  ? `Ganó ${view.players.find((p) => p.id === view.winnerId)?.name}`
-                  : yourTurn
-                    ? "Te toca"
-                    : `Turno de ${current?.name ?? "…"}`}
-              </span>
-              {/* Como en los chips: "(bot)" en el título se comía el nombre a 390 px. */}
-              {!view.winnerId && !yourTurn && current?.isBot && (
-                <span
-                  className="shrink-0 self-center rounded-sm bg-sky-400/20 px-1 py-[1px] font-sans text-[9px] font-bold uppercase tracking-wide text-sky-300"
-                  data-testid="turn-bot"
-                >
-                  bot
-                </span>
-              )}
-            </p>
-            {view.deadlineAt && view.phase !== "fin" && (
-              <Deadline at={view.deadlineAt} className="shrink-0 text-[11px] tabular-nums text-amber-200/70" />
-            )}
-          </div>
+      <div
+        className="pointer-events-auto relative z-20 flex h-14 items-center gap-2 px-2 md:h-16 md:px-3"
+        data-hud-edge="top"
+      >
+        {sfxOn && !sfxUnlocked && (
+          <p
+            className="min-w-0 flex-1 truncate text-[11px] leading-none text-amber-100/80"
+            data-testid="sfx-unlock"
+            title="Tocá o pulsá una tecla para que el navegador deje sonar, también en el celular."
+          >
+            Tocá o pulsá una tecla para que el navegador deje sonar, también en el celular.
+          </p>
+        )}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {holdingDice ? (
             <button
               type="button"
-              className="text-left text-xs text-amber-200/80 md:text-sm"
+              className="panel inline-flex min-h-10 items-center rounded-full px-3 text-xs font-semibold text-amber-100"
               data-testid="dice-hold"
               onClick={() => set({ diceUi: skipDiceHold(diceUi) })}
             >
-              Los dados están en el aire… tocá o Esc para ver
+              Dados en el aire
             </button>
-          ) : view.winnerId ? (
-            <p className="text-xs text-amber-100/80 md:text-sm">La partida llegó a {view.victoryPoints} puntos.</p>
           ) : (
-            <p className="text-xs text-amber-100/80 md:text-sm" aria-live="polite">
-              {phaseLine(view, yourTurn, current?.name ?? "otro")}
-            </p>
+            diceUi.revealed &&
+            view.dice && (
+              <p
+                className="panel inline-flex min-h-10 items-center gap-1.5 rounded-full px-3 text-xs font-semibold text-amber-100"
+                data-testid="dice-total"
+                aria-label={`Dados: ${view.dice[0]} + ${view.dice[1]} = ${view.dice[0] + view.dice[1]}`}
+              >
+                <DieFace n={view.dice[0]} />
+                <DieFace n={view.dice[1]} />
+                <span aria-hidden>= {view.dice[0] + view.dice[1]}</span>
+              </p>
+            )
           )}
-          {diceUi.revealed && view.dice && (
-            <p
-              className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-amber-200 md:text-sm"
-              data-testid="dice-total"
-              aria-label={`Dados: ${view.dice[0]} + ${view.dice[1]} = ${view.dice[0] + view.dice[1]}`}
-            >
-              <DieFace n={view.dice[0]} />
-              <DieFace n={view.dice[1]} />
-              <span aria-hidden>= {view.dice[0] + view.dice[1]}</span>
-            </p>
-          )}
-        </div>
-
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <button
             className="panel relative hidden min-h-10 rounded-full px-3 text-xs font-semibold text-amber-100 lg:block"
             title="Mesa (M)"
@@ -425,9 +495,8 @@ export function Hud({ view }: { view: ClientView }) {
               aria-label="Cerrar ajustes"
               onClick={() => setSettingsOpen(false)}
             />
-            {/* Debajo de los chips: abierto no tapa quién es BOT ni de quién es el turno. */}
             <div
-              className="panel panel-solid pointer-events-auto fixed inset-x-3 top-44 z-40 flex max-h-[70vh] flex-col gap-1.5 overflow-y-auto rounded-2xl p-2 lg:inset-x-auto lg:left-3 lg:w-60"
+              className="panel panel-solid pointer-events-auto fixed inset-x-2 top-14 z-40 flex max-h-[70vh] flex-col gap-1.5 overflow-y-auto rounded-2xl p-2 md:inset-x-3 md:top-16 lg:inset-x-auto lg:left-3 lg:w-80"
               data-testid="settings-panel"
               role="dialog"
               aria-label="Opciones"
@@ -475,6 +544,45 @@ export function Hud({ view }: { view: ClientView }) {
                 Sonido: {sfxOn ? "activado" : "apagado"}
               </button>
               <button
+                type="button"
+                className={SETTING_ROW}
+                data-testid="confirm-toggle"
+                aria-pressed={confirmActions}
+                onClick={() => {
+                  const next = !confirmActions;
+                  saveConfirmActions(next);
+                  set({ confirmActions: next, pending: next ? useApp.getState().pending : null });
+                }}
+              >
+                Confirmación: {confirmActions ? "activada" : "desactivada"}
+              </button>
+              <label className="flex min-h-11 flex-col justify-center gap-1 rounded-xl bg-black/30 px-3 py-1.5">
+                <span className="text-xs font-semibold text-amber-100">Volumen general · {Math.round(sfxVolume * 100)}</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={Math.round(sfxVolume * 100)}
+                  className="accent-amber-300"
+                  aria-label="Volumen general"
+                  data-testid="sfx-volume"
+                  onChange={(e) => set({ sfxVolume: Number(e.target.value) / 100 })}
+                />
+              </label>
+              {SFX_CATEGORIES.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  className="min-h-11 rounded-xl bg-black/30 px-3 text-left text-xs font-semibold text-amber-100 hover:bg-black/45"
+                  data-testid={`sfx-cat-${cat}`}
+                  aria-pressed={!sfxMute[cat]}
+                  onClick={() => set({ sfxMute: { ...sfxMute, [cat]: !sfxMute[cat] } })}
+                >
+                  {SFX_CATEGORY_LABEL[cat]}: {sfxMute[cat] ? "apagado" : "activado"}
+                </button>
+              ))}
+              <button
                 className={`${SETTING_ROW} pointer-coarse:hidden`}
                 data-testid="shortcuts-toggle"
                 title="Atajos (?)"
@@ -499,17 +607,20 @@ export function Hud({ view }: { view: ClientView }) {
         )}
       </div>
 
-      {mesaOpen && (
-        <div
-          className="pointer-events-auto absolute top-[4.75rem] right-3 bottom-24 z-10 hidden w-72 flex-col lg:flex"
-          data-hud-edge="right"
-          data-testid="mesa-panel"
-        >
-          <MesaPanel view={view} onClose={() => set({ mesaOpen: false })} closeTestId="mesa-close" />
-        </div>
-      )}
+      <div
+        className="pointer-events-auto absolute top-16 right-3 bottom-40 z-10 hidden w-72 flex-col gap-2 lg:flex"
+        data-hud-edge="right"
+        data-testid="score-column"
+      >
+        <Scoreboard view={view} layout="column" />
+        {mesaOpen && (
+          <div className="flex min-h-0 flex-1 flex-col" data-testid="mesa-panel">
+            <MesaPanel view={view} onClose={() => set({ mesaOpen: false })} closeTestId="mesa-close" />
+          </div>
+        )}
+      </div>
 
-      <div className={`pointer-events-auto relative px-2 md:px-3 ${mesaOpen ? "lg:pr-[19.5rem]" : ""}`}>
+      <div className="pointer-events-auto relative px-2 md:px-3 lg:pr-[19.5rem]">
         {/* 5–6 asientos en un celu: dos filas de tres chips de una línea, así nombre, BOT, cartas y puntos entran sin cortarse. */}
         <div
           className={`grid gap-1 ${manySeats ? `grid-cols-3 ${view.players.length === 5 ? "sm:grid-cols-5" : "sm:grid-cols-6"}` : ""}`}
@@ -537,7 +648,13 @@ export function Hud({ view }: { view: ClientView }) {
         )}
       </div>
 
-      <div className="flex-1" />
+      <div className="lg:hidden">
+        <Scoreboard view={view} layout="row" />
+      </div>
+
+      <div className="min-h-0 flex-1">
+        <TurnAnnounce view={view} />
+      </div>
       {incoming.length > 0 && (
         <div
           className={`pointer-events-auto relative z-40 mx-auto mb-2 flex max-w-lg flex-col gap-1 px-2 ${
@@ -562,22 +679,18 @@ export function Hud({ view }: { view: ClientView }) {
                   <button
                     className="min-h-9 rounded-lg bg-emerald-700 px-2 font-semibold"
                     data-testid="trade-accept"
-                    onClick={() =>
-                      void sendAction({ type: "accept_trade", tradeId: t.id }).then((r) => {
-                        if (!r.ok) set({ toast: r.error ?? null });
-                      })
-                    }
+                    onClick={() => void previewOrRun({ kind: "accept", tradeId: t.id })}
                   >
                     Aceptar
                   </button>
                 )}
                 <button
                   className="min-h-9 rounded-lg bg-black/40 px-2 text-amber-100/80"
-                  aria-label={mine ? "Cancelar oferta" : "Rechazar oferta"}
+                  aria-label={mine ? "Cancelar oferta" : t.toId === "todos" ? "Pasar de la oferta" : "Rechazar oferta"}
                   data-testid={mine ? "trade-cancel" : "trade-reject"}
                   onClick={() => void sendAction({ type: "reject_trade", tradeId: t.id })}
                 >
-                  {mine ? "Cancelar" : "Rechazar"}
+                  {mine ? "Cancelar" : t.toId === "todos" ? "Paso" : "Rechazar"}
                 </button>
               </div>
             );
@@ -587,14 +700,28 @@ export function Hud({ view }: { view: ClientView }) {
       <ProductionFly />
 
       {toast ? (
-        <button
-          className="pointer-events-auto mx-auto mb-2 rounded-xl bg-red-800 px-4 py-2 text-sm"
-          data-testid="toast"
-          role="alert"
-          onClick={() => set({ toast: null })}
-        >
-          {toast}
-        </button>
+        typeof toast === "string" ? (
+          <button
+            className="pointer-events-auto relative z-30 mx-auto mb-2 rounded-xl bg-red-800 px-4 py-2 text-sm"
+            data-testid="toast"
+            role="alert"
+            onClick={() => set({ toast: null })}
+          >
+            {toast}
+          </button>
+        ) : (
+          <button
+            className="pointer-events-auto relative z-30 mx-auto mb-2 flex max-w-md items-center gap-2.5 rounded-2xl border border-amber-200/55 bg-stone-950 px-4 py-3 text-base font-semibold text-amber-50 shadow-xl"
+            data-testid="toast"
+            data-kind="robo"
+            data-resource={toast.resource}
+            role="alert"
+            onClick={() => set({ toast: null })}
+          >
+            <ResourceIcon resource={toast.resource} size={28} decorative />
+            <span>{toast.text}</span>
+          </button>
+        )
       ) : (
         hint && (
           <button
@@ -608,7 +735,11 @@ export function Hud({ view }: { view: ClientView }) {
         )
       )}
 
-      <div className={`pointer-events-auto hidden items-end justify-between gap-3 p-3 lg:flex ${mesaOpen ? "lg:pr-80" : ""}`}>
+      <ConfirmBar view={view} />
+
+      <TurnBar view={view} />
+
+      <div className="pointer-events-auto hidden items-end justify-between gap-3 p-3 lg:flex lg:pr-80">
         <div className="min-w-0 flex-1" data-hud-edge="bottom">
           <HandStrip view={view} />
         </div>
@@ -624,11 +755,7 @@ export function Hud({ view }: { view: ClientView }) {
                   primary.tone === "emerald" ? "bg-emerald-600 text-white" : "bg-amber-200 text-stone-900"
                 }`}
                 data-testid="desk-primary"
-                onClick={() => {
-                  void primary.act().then((r) => {
-                    if (!r.ok) set({ toast: r.error ?? "No se pudo." });
-                  });
-                }}
+                onClick={runPrimary}
               >
                 {primary.label}
                 <kbd className="ml-2 rounded bg-black/15 px-1.5 py-px text-[10px] font-bold">{primary.key}</kbd>
@@ -695,11 +822,7 @@ export function Hud({ view }: { view: ClientView }) {
                 label={primary.label}
                 tone={primary.tone as "amber" | "emerald"}
                 testId="dock-primary"
-                onClick={() => {
-                  void primary.act().then((r) => {
-                    if (!r.ok) set({ toast: r.error ?? "No se pudo." });
-                  });
-                }}
+                onClick={runPrimary}
               />
             ) : (
               <DockBtn
@@ -752,11 +875,10 @@ export function Hud({ view }: { view: ClientView }) {
       {!holdingDice && view.legal.mustDiscard > 0 && <DiscardModal view={view} />}
       {!holdingDice && view.legal.stealFrom.length > 0 && <StealSheet view={view} />}
       {view.phase === "fin" && (
-        <div className="pointer-events-auto absolute inset-0 flex items-center justify-center bg-black/50 p-4">
+        <div className="pointer-events-none absolute inset-x-0 bottom-28 z-20 flex justify-center px-3 md:bottom-6 md:left-3 md:right-auto md:justify-start">
           <div
-            className="panel max-w-md rounded-3xl p-8 text-center"
-            role="dialog"
-            aria-modal="true"
+            className="colonos-victory pointer-events-auto panel max-h-[50vh] w-full max-w-sm overflow-y-auto rounded-3xl p-4 text-left shadow-lg md:p-5"
+            role="status"
             aria-labelledby="game-over-title"
             data-testid="game-over"
           >
@@ -765,20 +887,18 @@ export function Hud({ view }: { view: ClientView }) {
             </h2>
             <p className="mt-2 text-amber-100">
               {view.players.find((p) => p.id === view.winnerId)?.name} se queda con la isla (
-              {view.victoryPoints} puntos).
+              {winnerShownPoints(view)} puntos).
             </p>
             <ul className="mx-auto mt-4 max-w-xs space-y-1 text-left text-sm text-amber-50">
               {[...view.players]
-                .sort((a, b) => b.visibleVp - a.visibleVp)
+                .sort((a, b) => shownPoints(view, b.id, b.visibleVp) - shownPoints(view, a.id, a.visibleVp))
                 .map((p) => (
                   <li key={p.id} className="flex items-baseline justify-between gap-3">
                     <span className="min-w-0 truncate">
                       {p.name}
                       {p.id === view.winnerId ? " · ganó" : ""}
                     </span>
-                    <span className="shrink-0 tabular-nums">
-                      {p.id === view.youId ? view.hand.totalVp : p.visibleVp}
-                    </span>
+                    <span className="shrink-0 tabular-nums">{shownPoints(view, p.id, p.visibleVp)}</span>
                   </li>
                 ))}
             </ul>
@@ -798,6 +918,7 @@ export function Hud({ view }: { view: ClientView }) {
                     code: "",
                     error: null,
                     sheet: null,
+                    pending: null,
                   });
                 });
               }}
@@ -898,12 +1019,13 @@ function HandStrip({ view }: { view: ClientView }) {
                 size={24}
                 onClick={() => {
                   const giveN = settlementPortRate(view, view.youId, bankTradeFrom);
-                  void sendAction({
-                    type: "bank_trade",
+                  void previewOrRun({
+                    kind: "bank",
                     give: { [bankTradeFrom]: giveN },
                     want: { [want]: 1 },
+                    rate: giveN,
                   }).then((res) => {
-                    set({ bankTradeFrom: null, toast: res.error ?? null });
+                    if (res?.ok) set({ bankTradeFrom: null });
                   });
                 }}
               />
@@ -982,11 +1104,14 @@ function StealSheet({ view }: { view: ClientView }) {
   if (!people.length) return null;
   return (
     <div className="pointer-events-auto absolute inset-x-0 bottom-[6.75rem] z-30 lg:bottom-24">
-      <div
+      <FocusTrap
         className="panel mx-auto w-full max-w-lg rounded-t-3xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
         data-testid="steal-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="steal-title"
       >
-        <p className="mb-3 font-semibold">¿A quién le afanás?</p>
+        <p id="steal-title" className="mb-3 font-semibold">¿A quién le afanás?</p>
         <p className="mb-2 text-xs text-amber-100/70">Robás 1 carta al azar de esa mano.</p>
         <div className="flex flex-col gap-2">
           {people.map((p) => (
@@ -1013,7 +1138,7 @@ function StealSheet({ view }: { view: ClientView }) {
             </button>
           ))}
         </div>
-      </div>
+      </FocusTrap>
     </div>
   );
 }
@@ -1025,8 +1150,8 @@ function DiscardModal({ view }: { view: ClientView }) {
   const total = useMemo(() => RESOURCES.reduce((s, r) => s + (sel[r] ?? 0), 0), [sel]);
   return (
     <div className="pointer-events-auto absolute inset-0 flex items-center justify-center bg-black/55 p-4">
-      <div
-        className="panel w-full max-w-md rounded-2xl p-5"
+      <FocusTrap
+        className="panel w-full max-w-md rounded-2xl p-5 outline-none"
         data-testid="discard-modal"
         role="dialog"
         aria-modal="true"
@@ -1055,7 +1180,7 @@ function DiscardModal({ view }: { view: ClientView }) {
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
-                    className="h-7 w-7 rounded bg-black/40 text-sm"
+                    className="h-11 w-11 rounded bg-black/40 text-sm"
                     aria-label={`Quitar ${RESOURCE_LABEL[r]}`}
                     disabled={n <= 0}
                     onClick={() => setSel({ ...sel, [r]: Math.max(0, n - 1) })}
@@ -1065,7 +1190,7 @@ function DiscardModal({ view }: { view: ClientView }) {
                   <span className="w-4 text-center text-sm font-bold tabular-nums">{n}</span>
                   <button
                     type="button"
-                    className="h-7 w-7 rounded bg-black/40 text-sm"
+                    className="h-11 w-11 rounded bg-black/40 text-sm"
                     aria-label={`Agregar ${RESOURCE_LABEL[r]}`}
                     disabled={n >= have || total >= need}
                     onClick={() => setSel({ ...sel, [r]: n + 1 })}
@@ -1079,7 +1204,7 @@ function DiscardModal({ view }: { view: ClientView }) {
         </div>
         <button
           disabled={total !== need}
-          className="mt-4 w-full rounded-xl bg-amber-200 py-2 font-semibold text-stone-900 disabled:bg-stone-600"
+          className="mt-4 min-h-11 w-full rounded-xl bg-amber-200 py-2 font-semibold text-stone-900 disabled:bg-stone-600"
           onClick={() => {
             void sendAction({ type: "discard", resources: sel }).then((r) => {
               if (!r.ok) set({ toast: r.error ?? null });
@@ -1088,7 +1213,7 @@ function DiscardModal({ view }: { view: ClientView }) {
         >
           Tirar {total}/{need}
         </button>
-      </div>
+      </FocusTrap>
     </div>
   );
 }

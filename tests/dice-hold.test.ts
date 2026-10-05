@@ -69,7 +69,9 @@ describe("dados: la mano, el log y las cartas no adelantan el resultado", () => 
     // Reconexión o captura congelada: sin hold no se festeja lo cobrado antes.
     expect(rollGainsFor(setup, { holdFromEventId: 0 }, "p0")).toBeNull();
     const fly = readFileSync("src/ui/ProductionFly.tsx", "utf8");
-    expect(fly).toContain("rollGainsFor");
+    const plan = readFileSync("src/play/harvest.ts", "utf8");
+    expect(plan).toContain("rollGainsFor");
+    expect(fly).toContain("harvestFlights");
     expect(fly).toContain("flownHold.current === holdFrom");
     // La tira de escritorio sigue en el DOM oculta en el celu: el destino es la que se ve.
     expect(fly).toContain("querySelectorAll");

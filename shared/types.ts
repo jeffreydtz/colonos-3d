@@ -11,6 +11,20 @@ export type ColorId = "rojo" | "azul" | "naranja" | "blanco" | "verde" | "marron
 
 import type { BoardKind } from "./constants.ts";
 
+/** Quién abre y en qué orden, congelado al apretar Empezar. */
+export interface KickoffSeat {
+  id: string;
+  name: string;
+  color: ColorId;
+  isBot: boolean;
+}
+
+export interface KickoffInfo {
+  starterId: string;
+  boardKind: BoardKind;
+  order: KickoffSeat[];
+}
+
 export type Phase =
   | "colocacion_poblado"
   | "colocacion_camino"
@@ -98,6 +112,8 @@ export interface TradeOffer {
   toId: string | "todos";
   give: Partial<Resources>;
   want: Partial<Resources>;
+  /** Quien pasó de una oferta a la mesa. No sale en la vista. */
+  declinedBy?: string[];
 }
 
 export type LogKind =
@@ -131,8 +147,12 @@ export interface LogEvent {
   dice?: [number, number];
   resources?: Partial<Resources>;
   piece?: LogPiece;
-  /** Sólo en el servidor: si está, únicamente estos jugadores ven íconos y recursos del evento. */
+  /**
+   * Sólo en el servidor. Si está, el resto no ve íconos ni recursos.
+   * Con `conceal`, quien no está en la lista no recibe el evento.
+   */
   audience?: string[];
+  conceal?: boolean;
 }
 
 export interface GameState {
@@ -156,6 +176,8 @@ export interface GameState {
   lastSettlementVertexId: string | null;
   dice: [number, number] | null;
   rollNo: number;
+  /** Semilla visual de la tirada. No decide el número: sólo la trayectoria, igual en todos los clientes. */
+  diceThrow: number;
   waitingDiscard: string[];
   discardNeeded: Record<string, number>;
   bank: Resources;
@@ -273,6 +295,10 @@ export interface ClientView {
   turnNumber: number;
   dice: [number, number] | null;
   rollNo: number;
+  /** Semilla visual compartida. Ausente en servidores viejos: el cliente deriva una igual para todos. */
+  diceThrow?: number | null;
+  /** Presente unos segundos después de Empezar. No vuelve en una reconexión tardía. */
+  kickoff?: KickoffInfo | null;
   legal: LegalMoves;
   events: LogEvent[];
   trades: TradeOffer[];

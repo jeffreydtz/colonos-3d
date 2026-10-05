@@ -201,8 +201,6 @@ export function legalMoves(state: GameState, playerId: string): LegalMoves {
     if (hasResources(player.resources, COSTS.ciudad) && player.pieces.ciudades > 0) {
       legal.cityVertices = legalCityVertices(state, playerId);
     }
-    legal.canBuyDev =
-      hasResources(player.resources, COSTS.dev) && state.devDeck.length > 0;
     legal.canEndTurn = true;
     return legal;
   }

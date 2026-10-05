@@ -3,7 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { hexToPixel } from "@shared/hex";
 import type { ClientView } from "@shared/types";
-import { playSfx, reduceMotion } from "../../audio/sfx";
+import { reduceMotion } from "../../audio/sfx";
 import { useApp } from "../../store";
 import { S, robberSpot } from "../geo";
 import { hexHeight } from "../HexDecor";
@@ -67,10 +67,7 @@ export function ProductionSparks({
       }
       next.push(...burst);
     }
-    if (next.length) {
-      live.current = next;
-      if (!freeze) playSfx("produce", 0.7);
-    }
+    if (next.length) live.current = next;
   }, [lastFx, presenting, revealed, lite, freeze, view.dice, view.hexes, view.robberHexId]);
 
   useFrame((_, dt) => {
@@ -141,7 +138,6 @@ export function RobberPuff({
       }
     }
     live.current = next;
-    if (!freeze) playSfx("robber");
   }, [lastFx, lite, freeze, view.hexes, view.robberHexId]);
 
   useFrame((_, dt) => {

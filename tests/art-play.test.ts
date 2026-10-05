@@ -8,7 +8,8 @@ describe("jugabilidad extra", () => {
     expect(keys).toContain('k === "p"');
     expect(keys).toContain("shortcuts-help");
     const hud = readFileSync("src/ui/Hud.tsx", "utf8");
-    expect(hud).toContain('data-testid="turn-banner"');
+    expect(hud).toContain('data-testid="turn-bar"');
+    expect(hud).not.toContain('data-testid="turn-banner"');
     // «Te toca» ya es la marca: el renglón «TU TURNO» abajo lo repetía.
     expect(hud).toContain('? "tu-turno" : undefined');
     expect(hud).not.toContain(">\n              Tu turno\n");

@@ -14,6 +14,21 @@
   --c-token-hot: #b3261e;
   --c-trim: #b08d3c;
   --c-outline: #120c08;
+  /* Mismos números que src/motion/tokens.ts. docs/motion.md los nombra. */
+  --m-burst: 900ms;
+  --m-rise: 560ms;
+  --m-flip: 700ms;
+  --m-tear: 420ms;
+  --m-pack: 560ms;
+  --m-tilt: 140ms;
+  --m-victory: 480ms;
+  --m-catch: 220ms;
+  --m-seat: 420ms;
+  --m-out: cubic-bezier(0.33, 0, 0.2, 1);
+  --m-back: cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  --m-inout: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --m-in: cubic-bezier(0.55, 0, 0.75, 0.2);
+  --m-flip-ease: cubic-bezier(0.3, 0.7, 0.2, 1);
   font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
   color: var(--c-parchment);
   background: var(--c-room);
@@ -103,7 +118,7 @@ h2,
 .reveal-burst.is-on {
   opacity: 0.6;
   transform: scale(1);
-  animation: reveal-burst 900ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: reveal-burst var(--m-burst) var(--m-inout);
 }
 .reveal-rays {
   position: absolute;
@@ -119,7 +134,7 @@ h2,
   z-index: 1;
   perspective: 900px;
   transform: translateY(7%) scale(0.94);
-  transition: transform 560ms cubic-bezier(0.2, 0.9, 0.3, 1.2) 180ms;
+  transition: transform var(--m-rise) var(--m-back) 180ms;
 }
 .reveal-card.is-out {
   transform: none;
@@ -129,14 +144,14 @@ h2,
   height: 100%;
   transform-style: preserve-3d;
   transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
-  transition: transform 140ms ease-out;
+  transition: transform var(--m-tilt) ease-out;
 }
 .reveal-flip {
   position: relative;
   width: 100%;
   height: 100%;
   transform-style: preserve-3d;
-  transition: transform 700ms cubic-bezier(0.3, 0.7, 0.2, 1);
+  transition: transform var(--m-flip) var(--m-flip-ease);
 }
 .reveal-flip[data-flipped="true"] {
   transform: rotateY(180deg);
@@ -192,7 +207,7 @@ h2,
     repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.28) 0 2px, transparent 2px 7px),
     linear-gradient(160deg, #8a3412 0%, #4a1a0a 100%);
   transition:
-    transform 420ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform var(--m-tear) var(--m-inout),
     opacity 380ms ease-in;
 }
 .reveal-pack-body {
@@ -207,7 +222,7 @@ h2,
   padding: 1rem;
   text-align: center;
   transition:
-    transform 560ms cubic-bezier(0.55, 0, 0.75, 0.2) 140ms,
+    transform var(--m-pack) var(--m-in) 140ms,
     opacity 420ms ease-in 260ms;
 }
 .reveal-pack.is-open .reveal-pack-top {
@@ -255,14 +270,104 @@ button:focus-visible {
 }
 
 @keyframes colonos-fly-hud {
-  to {
-    transform: translate(var(--dx), var(--dy)) scale(0.55);
-    opacity: 0.15;
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  45% {
+    transform: translate(calc(-50% + var(--dx) * 0.48), calc(-50% + var(--dy) * 0.48 + var(--lift, 0px))) scale(1.06);
+    opacity: 1;
+  }
+  78% {
+    transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0.92);
+    opacity: 1;
+  }
+  88% {
+    transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy) + var(--bounce, 0px))) scale(1.05);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0.7);
+    opacity: 0;
   }
 }
 
 .colonos-fly-hud {
-  animation: colonos-fly-hud 1s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-name: colonos-fly-hud;
+  animation-duration: var(--flight, 780ms);
+  animation-delay: var(--delay, 0ms);
+  animation-timing-function: var(--m-out);
+  animation-fill-mode: both;
+}
+
+@keyframes colonos-harvest-pop {
+  0% {
+    transform: translate(-50%, calc(-50% + 4px)) scale(0.7);
+    opacity: 0;
+  }
+  40% {
+    transform: translate(-50%, calc(-50% + var(--lift, 0px))) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, calc(-50% + var(--lift, 0px) - 6px)) scale(0.86);
+    opacity: 0;
+  }
+}
+
+.colonos-harvest-pop {
+  animation-name: colonos-harvest-pop;
+  animation-duration: var(--flight, 460ms);
+  animation-delay: var(--delay, 0ms);
+  animation-timing-function: ease-out;
+  animation-fill-mode: both;
+}
+
+@keyframes colonos-hand-catch {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.colonos-hand-catch {
+  animation: colonos-hand-catch var(--m-catch) ease-out;
+}
+
+@keyframes colonos-seat-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(227, 155, 18, 0);
+  }
+  45% {
+    box-shadow: 0 0 0 3px rgba(227, 155, 18, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(227, 155, 18, 0);
+  }
+}
+
+.colonos-seat-pulse {
+  animation: colonos-seat-pulse var(--m-seat) ease-out;
+}
+
+@keyframes colonos-victory {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.colonos-victory {
+  animation: colonos-victory var(--m-victory) var(--m-inout);
 }
 
 .kbd {
@@ -279,10 +384,14 @@ button:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .colonos-fly,
   .colonos-fly-hud,
+  .colonos-harvest-pop,
+  .colonos-hand-catch,
+  .colonos-seat-pulse,
   .foil-sheen,
   .reveal-burst.is-on,
   .reveal-rays,
-  .reveal-holo {
+  .reveal-holo,
+  .colonos-victory {
     animation: none;
   }
   .reveal-card,
@@ -307,6 +416,21 @@ button:focus-visible {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+.kickoff-card {
+  animation: kickoff-in 420ms ease-out;
+}
+
+@keyframes kickoff-in {
+  from {
+    transform: translateY(16px) scale(0.98);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
 }
 
 @keyframes colonos-fly-in {

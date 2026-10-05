@@ -3,7 +3,7 @@ import * as THREE from "three";
 import type { ThemeId } from "../../theme/tokens";
 import { FRAME_TOP } from "../geo";
 import type { BoardLayout } from "../layout";
-import { woodTexture } from "../procTextures";
+import { releaseWood, woodTexture } from "../procTextures";
 import { liteWood } from "./liteWood";
 
 const FRAME_BOTTOM = -0.08;
@@ -32,6 +32,7 @@ export function Frame({ layout, lite, theme }: { layout: BoardLayout; lite: bool
   const geo = useMemo(() => frameGeometry(layout), [layout]);
   useEffect(() => () => geo.dispose(), [geo]);
   const wood = useMemo(() => woodTexture(0.55, 0.55, lite ? 2 : 8), [lite]);
+  useEffect(() => () => releaseWood(wood), [wood]);
   const liteLook = useMemo(() => liteWood("frame", theme), [theme]);
   const caps = useMemo(() => layout.frameOuter.map((p) => {
     const a = Math.atan2(p.y - layout.center.y, p.x - layout.center.x);

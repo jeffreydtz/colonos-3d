@@ -1,8 +1,12 @@
+import { useFrame } from "@react-three/fiber";
 import { hexToPixel, pips } from "@shared/hex";
 import { useLayoutEffect, useMemo, useRef } from "react";
+import { reuseVec2, useDispose } from "../dispose";
 import * as THREE from "three";
 import type { ClientView } from "@shared/types";
+import { reduceMotion } from "../../audio/sfx";
 import { TOKENS } from "../../theme/tokens";
+import { introIds, introPlaying, riseY } from "../boardIntro";
 import { S, TILE_TOP, TOKEN_H, TOKEN_R, digitScale } from "../geo";
 import { repaintOnFont } from "../procTextures";
 
@@ -155,15 +159,22 @@ export function Tokens({
           }),
     [lite],
   );
+  useDispose(body);
+  useDispose(face);
+  useDispose(faceMat);
+  useDispose(bodyMat);
 
-  useLayoutEffect(() => {
+  const done = useRef(false);
+  const introId = introIds(hexes);
+  const paint = (now: number) => {
     const bMesh = bodyRef.current;
     const fMesh = faceRef.current;
     if (!fMesh) return;
+    const opts = { lite, reduce: reduceMotion() };
     const cells = new Float32Array(Math.max(items.length, 1) * 2);
     items.forEach((h, i) => {
       const p = hexToPixel(h.q, h.r, S);
-      const y = TOKEN_BASE_Y;
+      const y = TOKEN_BASE_Y + riseY(introId, h.q, h.r, now, opts);
       dummy.position.set(p.x, y, p.y);
       dummy.rotation.set(0, 0, 0);
       dummy.scale.set(1, 1, 1);
@@ -186,8 +197,19 @@ export function Tokens({
     fMesh.count = items.length;
     fMesh.instanceMatrix.needsUpdate = true;
     fMesh.computeBoundingSphere();
-    fMesh.geometry.setAttribute("aCell", new THREE.InstancedBufferAttribute(cells, 2));
-  }, [items, dummy, lite]);
+    reuseVec2(fMesh.geometry, "aCell", cells);
+  };
+  useLayoutEffect(() => {
+    done.current = false;
+    paint(performance.now());
+  }, [items, dummy, lite, introId, hexes]);
+  useFrame(() => {
+    if (done.current) return;
+    const now = performance.now();
+    const live = introPlaying(introId, hexes, now, { lite, reduce: reduceMotion() });
+    paint(now);
+    if (!live) done.current = true;
+  });
 
   if (items.length === 0) return null;
   const n = Math.max(1, items.length);

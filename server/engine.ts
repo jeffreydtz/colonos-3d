@@ -11,9 +11,11 @@ import {
   FULL_BANK,
   MAX_OPEN_OFFERS,
   PIECES,
+  RESOURCE_LABEL,
 } from "../shared/constants.ts";
 import type { BoardKind } from "../shared/constants.ts";
-import { cryptoInt, freshSeed, mulberry32, pickInt, shuffle } from "../shared/rng.ts";
+import { mulberry32, pickInt, shuffle } from "../shared/rng.ts";
+import { cryptoInt, freshSeed } from "./fairDice.ts";
 import { RESOURCES } from "../shared/types.ts";
 import type {
   Action,
@@ -70,11 +72,15 @@ function tradeIcons(give: Partial<Resources>, want: Partial<Resources>): LogIcon
   return [...resIcons(give), { kind: "sep" }, ...resIcons(want)];
 }
 
+export function appendLog(state: GameState, text: string, playerId: string | null = null): void {
+  log(state, text, "turno", { playerId });
+}
+
 function log(
   state: GameState,
   text: string,
   kind: LogEvent["kind"] = "sistema",
-  extra: Partial<Pick<LogEvent, "playerId" | "otherId" | "icons" | "dice" | "resources" | "piece" | "audience">> = {},
+  extra: Partial<Pick<LogEvent, "playerId" | "otherId" | "icons" | "dice" | "resources" | "piece" | "audience" | "conceal">> = {},
 ): void {
   state.events.push({
     id: state.nextEventId++,
@@ -88,6 +94,7 @@ function log(
     resources: extra.resources,
     piece: extra.piece,
     ...(extra.audience ? { audience: extra.audience } : {}),
+    ...(extra.conceal ? { conceal: true } : {}),
   });
   if (state.events.length > 400) state.events.splice(0, state.events.length - 400);
 }
@@ -140,6 +147,16 @@ function secretInt(state: GameState, min: number, max: number): number {
   );
 }
 
+/** Dos dados independientes, 1 a 6, sólo `crypto.randomInt`. Lo usa la tirada en vivo. */
+export function rollFairDice(): [number, number] {
+  return [cryptoInt(1, 6), cryptoInt(1, 6)];
+}
+
+function rollPair(state: GameState): [number, number] {
+  if (state.entropy === "test") return [secretInt(state, 1, 6), secretInt(state, 1, 6)];
+  return rollFairDice();
+}
+
 export function visibleVp(state: GameState, playerId: string): number {
   let vp = 0;
   for (const b of state.buildings) {
@@ -160,6 +177,8 @@ export function totalVp(state: GameState, playerId: string): number {
 /** Cierra la partida si `playerId` llegó a los puntos. Devuelve si la partida terminó. */
 function checkWin(state: GameState, playerId: string): boolean {
   if (state.phase === "fin") return true;
+  // En 5–6 la pausa no es tu turno: los puntos esperan a que te toque tirar.
+  if (state.phase === "construccion_especial") return false;
   if (totalVp(state, playerId) < state.victoryPoints) return false;
   state.phase = "fin";
   state.winnerId = playerId;
@@ -199,9 +218,14 @@ export function createGame(opts: {
   entropy?: "test" | "crypto";
 }): GameState {
   const boardKind: BoardKind = boardKindForCount(opts.players.length);
-  const seed = opts.seed ?? freshSeed();
-  const entropy: "test" | "crypto" = opts.entropy ?? (opts.seed != null ? "test" : "crypto");
-  const deckSeed = opts.seed != null ? (opts.seed ^ 0x9e3779b9) >>> 0 : freshSeed();
+  // Producción ignora semilla y entropy de test: el tablero y los dados salen de crypto.randomInt.
+  const production = process.env.NODE_ENV === "production";
+  const entropy: "test" | "crypto" = production
+    ? "crypto"
+    : (opts.entropy ?? (opts.seed != null ? "test" : "crypto"));
+  const useSeed = !production && opts.seed != null;
+  const seed = useSeed ? opts.seed! : freshSeed();
+  const deckSeed = useSeed ? (opts.seed! ^ 0x9e3779b9) >>> 0 : freshSeed();
   const boardRng = mulberry32(seed);
   const deckRng = mulberry32(deckSeed);
   const board = buildBoard(boardRng, boardKind);
@@ -236,6 +260,7 @@ export function createGame(opts: {
     lastSettlementVertexId: null,
     dice: null,
     rollNo: 0,
+    diceThrow: 0,
     waitingDiscard: [],
     discardNeeded: {},
     bank: FULL_BANK(boardKind === "expansion" ? BANK_EACH_EXPANSION : BANK_EACH_STANDARD),
@@ -559,10 +584,15 @@ function actPlaceRoad(state: GameState, player: PlayerState, edgeId: string): En
 function actRoll(state: GameState, player: PlayerState): EngineResult {
   if (state.phase !== "dados") return fail("No es momento de tirar.");
   if (checkWin(state, player.id)) return { ok: true };
-  const d1 = secretInt(state, 1, 6);
-  const d2 = secretInt(state, 1, 6);
+  const [d1, d2] = rollPair(state);
   state.dice = [d1, d2];
   state.rollNo += 1;
+  // La trayectoria es otra tirada criptográfica. No entra en el stream de los números
+  // de test, así las partidas con semilla siguen siendo reproducibles.
+  state.diceThrow =
+    state.entropy === "test"
+      ? (Math.imul((state.seed ^ Math.imul(state.rollNo, 0x9e3779b9)) >>> 0, 0x85ebca6b) >>> 0) || 1
+      : cryptoInt(1, 0x7fff_ffff);
   const total = d1 + d2;
   log(state, `${player.name} sacó ${total}`, "dados", {
     playerId: player.id,
@@ -611,9 +641,18 @@ function stealOne(state: GameState, thief: PlayerState, victimId: string): void 
   if (res) {
     victim.resources[res] -= 1;
     thief.resources[res] += 1;
-    log(state, `${thief.name} le afanó una carta a ${victim.name}.`, "ladron", {
+    const label = RESOURCE_LABEL[res];
+    log(state, `${thief.name} le robó 1 carta a ${victim.name}.`, "ladron", {
       playerId: thief.id,
       otherId: victim.id,
+    });
+    log(state, `${thief.name} te robó 1 ${label}.`, "ladron", {
+      playerId: thief.id,
+      otherId: victim.id,
+      resources: { [res]: 1 },
+      icons: [{ kind: "res", id: res, n: 1 }],
+      audience: [victim.id],
+      conceal: true,
     });
   }
 }
@@ -771,7 +810,10 @@ function actBuildCity(state: GameState, player: PlayerState, vertexId: string): 
 
 function actBuyDev(state: GameState, player: PlayerState): EngineResult {
   if (state.pendingRoadBuilding > 0) return fail("Primero terminá los caminos de la carta.");
-  if (!canBuildPhase(state)) return fail("Ahora no se compran cartas.");
+  if (state.phase === "construccion_especial") {
+    return fail("En la pausa de construcción no se compran cartas.");
+  }
+  if (state.phase !== "principal") return fail("Ahora no se compran cartas.");
   if (!hasResources(player.resources, COSTS.dev)) return fail("Te faltan recursos para la carta.");
   if (state.devDeck.length === 0) return fail("Se acabaron las cartas de desarrollo.");
   returnToBank(state, player, COSTS.dev);
@@ -811,9 +853,12 @@ function actPlayKnight(
   });
   const res = actRobber(state, player, hexId, stealFromId, true);
   awards(state);
+  if (checkWin(state, player.id)) {
+    state.pendingStealHexId = null;
+    return { ok: true, animations: ["robber"] };
+  }
   if (res.ok && !state.pendingStealHexId) {
     afterRobber(state);
-    checkWin(state, player.id);
     return { ok: true, animations: ["robber"] };
   }
   state.phase = "ladron";
@@ -837,14 +882,27 @@ function actYearPlenty(
   const gain: Partial<Resources> = {};
   gain[pair[0]] = (gain[pair[0]] ?? 0) + 1;
   gain[pair[1]] = (gain[pair[1]] ?? 0) + 1;
+  const before = { ...player.resources };
   giveFromBank(state, player, gain);
+  const got: Partial<Resources> = {};
+  for (const k of RESOURCES) {
+    const n = player.resources[k] - before[k];
+    if (n > 0) got[k] = n;
+  }
   state.playedDevThisTurn = true;
-  log(state, `${player.name} jugó :invento: y tomó`, "dev", {
-    playerId: player.id,
-    piece: "invento",
-    resources: gain,
-    icons: resIcons(gain),
-  });
+  if (sumResources(got) > 0) {
+    log(state, `${player.name} jugó :invento: y tomó`, "dev", {
+      playerId: player.id,
+      piece: "invento",
+      resources: got,
+      icons: resIcons(got),
+    });
+  } else {
+    log(state, `${player.name} jugó :invento:, pero el banco no tenía.`, "dev", {
+      playerId: player.id,
+      piece: "invento",
+    });
+  }
   return { ok: true };
 }
 
@@ -941,14 +999,23 @@ function actTradeResponse(
   const trade = state.trades.find((t) => t.id === action.tradeId);
   if (!trade) return fail("Esa oferta ya no está.");
   if (action.type === "reject_trade") {
-    if (trade.toId !== "todos" && trade.toId !== player.id && trade.fromId !== player.id) {
-      return fail("Esa oferta no es para vos.");
+    if (trade.fromId === player.id) {
+      state.trades = state.trades.filter((t) => t.id !== trade.id);
+      return { ok: true };
     }
+    if (trade.toId === "todos") {
+      const declined = new Set(trade.declinedBy ?? []);
+      declined.add(player.id);
+      trade.declinedBy = [...declined];
+      return { ok: true };
+    }
+    if (trade.toId !== player.id) return fail("Esa oferta no es para vos.");
     state.trades = state.trades.filter((t) => t.id !== trade.id);
     return { ok: true };
   }
   if (action.type === "counter_trade") {
     if (trade.fromId === player.id) return fail("Contraofertale a otro.");
+    if (trade.declinedBy?.includes(player.id)) return fail("Ya pasaste de esa oferta.");
     if (trade.toId !== "todos" && trade.toId !== player.id) {
       return fail("Esa oferta no es para vos.");
     }
@@ -978,6 +1045,7 @@ function actTradeResponse(
   }
   if (state.phase !== "principal") return fail("El comercio ya no está abierto.");
   if (trade.fromId === player.id) return fail("No podés aceptar tu propia oferta.");
+  if (trade.declinedBy?.includes(player.id)) return fail("Ya pasaste de esa oferta.");
   if (trade.toId !== "todos" && trade.toId !== player.id) return fail("Esa oferta no es para vos.");
   const from = state.players.find((p) => p.id === trade.fromId);
   if (!from) return fail("El otro jugador no está.");
@@ -1011,7 +1079,7 @@ function actBank(
   const res = giveTypes[0]!;
   const rate = bestBankRate(state, player.id, res);
   if (giveN !== rate * wantN) {
-    return fail(`Con tu puerto el cambio es ${rate}:1.`);
+    return fail(rate === 4 ? "El cambio con el banco es 4:1." : `Con tu puerto el cambio es ${rate}:1.`);
   }
   if (!hasResources(player.resources, give)) return fail("No te alcanza para el banco.");
   if (!hasResources(state.bank, want)) return fail("El banco no tiene eso.");
@@ -1042,7 +1110,6 @@ function actEndTurn(state: GameState, player: PlayerState): EngineResult {
         playerId: nxt?.id ?? null,
       });
     }
-    checkWin(state, player.id);
     return { ok: true };
   }
   if (state.phase !== "principal") return fail("Todavía no podés pasar.");

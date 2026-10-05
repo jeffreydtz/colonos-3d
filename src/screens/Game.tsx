@@ -3,7 +3,9 @@ import { SfxDirector } from "../audio/SfxDirector";
 import { reduceMotion } from "../audio/sfx";
 import { CardReveal } from "../three/CardReveal";
 import { beginDiceHold, DICE_HOLD_MS, DICE_HOLD_REDUCED_MS, skipDiceHold } from "../play/diceHold";
+import { devRevealForYou } from "../play/spotlight";
 import { Hud } from "../ui/Hud";
+import { Kickoff } from "../ui/Kickoff";
 import { IconSheet } from "../ui/icons/IconSheet";
 import { useApp } from "../store";
 
@@ -30,6 +32,7 @@ export function Game() {
   const artFreeze = useApp((s) => s.artFreeze);
   const iconSheet = useApp((s) => s.iconSheet);
   const lastFx = useApp((s) => s.lastFx);
+  const kickoff = useApp((s) => s.kickoff);
   const set = useApp((s) => s.set);
   useEffect(() => {
     set({ unboxHidden: false });
@@ -56,7 +59,7 @@ export function Game() {
   }, [lastFx?.at, lastFx?.animations, artFreeze, set]);
   useEffect(() => {
     if (!view || unboxHidden || revealCard) return;
-    if (view.unboxPlayerId !== view.youId) return;
+    if (!devRevealForYou(view.youId, view.unboxPlayerId)) return;
     const card = view.hand.devCards[view.hand.devCards.length - 1];
     if (card) set({ revealCard: card.kind });
   }, [view, unboxHidden, revealCard, set]);
@@ -67,13 +70,12 @@ export function Game() {
     return (
       <div className="relative h-full w-full overflow-hidden">
         {iconSheet && <IconSheet />}
+        {kickoff ? <Kickoff info={kickoff} onDone={() => set({ kickoff: null })} /> : null}
         <p className="p-8 text-amber-100">Cargando la isla…</p>
       </div>
     );
   }
-  const showingUnbox =
-    Boolean(revealCard) ||
-    Boolean(!unboxHidden && view.unboxPlayerId && view.unboxPlayerId !== view.youId);
+  const showingUnbox = Boolean(revealCard);
   return (
     <div className="relative h-full w-full overflow-hidden">
       <SfxDirector />
@@ -86,6 +88,7 @@ export function Game() {
         </Suspense>
       </div>
       {!showingUnbox && !artFreeze && <Hud view={view} />}
+      {kickoff && !artFreeze ? <Kickoff info={kickoff} onDone={() => set({ kickoff: null })} /> : null}
       {iconSheet && <IconSheet />}
       {revealCard && (
         <CardReveal
@@ -94,16 +97,6 @@ export function Game() {
           sfx={sfxOn}
           deadlineAt={view.deadlineAt}
           onClose={() => set({ revealCard: null, unboxHidden: true })}
-        />
-      )}
-      {!revealCard && !unboxHidden && view.unboxPlayerId && view.unboxPlayerId !== view.youId && (
-        <CardReveal
-          kind={null}
-          owner={false}
-          playerName={view.players.find((p) => p.id === view.unboxPlayerId)?.name}
-          sfx={false}
-          deadlineAt={view.deadlineAt}
-          onClose={() => set({ unboxHidden: true })}
         />
       )}
     </div>

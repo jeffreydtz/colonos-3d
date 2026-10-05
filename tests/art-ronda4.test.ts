@@ -31,12 +31,14 @@ describe("ronda 4 dados físicos y sin spoiler", () => {
     expect(game).toContain("DICE_HOLD_MS");
     const rig = readFileSync("src/three/dice/DiceRig.tsx", "utf8");
     const hold = readFileSync("src/play/diceHold.ts", "utf8");
+    const toss = readFileSync("src/three/dice/throw.ts", "utf8");
     expect(hold).toContain("export const DICE_HOLD_MS = 3200");
     expect(rig).toContain("DICE_HOLD_MS");
-    expect(rig).toContain("cannon-es");
+    expect(toss).toContain("cannon-es");
+    expect(rig).toContain("planThrow");
     expect(rig).toContain("playDiceHit");
     expect(rig).toContain("mat.dice");
-    expect(rig).toContain("DICE_LITE_MS");
+    expect(toss).toContain("world.step");
     const geo = readFileSync("src/three/dice/dieGeo.ts", "utf8");
     expect(geo).toContain("roundedBox");
     expect(geo).toContain("quatForFace");

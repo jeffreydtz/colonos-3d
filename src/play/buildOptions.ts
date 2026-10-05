@@ -51,6 +51,9 @@ export function devOption(view: ClientView): { cost: Bag; state: BuildState } {
     const note = view.currentPlayerId === view.youId ? "Después de colocar" : "En tu turno";
     return { cost, state: { kind: "wait", note } };
   }
+  if (view.phase === "construccion_especial") {
+    return { cost, state: { kind: "wait", note: "En la pausa no" } };
+  }
   return { cost, state: stateFor(view, view.legal.canBuyDev, cost, "Mazo vacío") };
 }
 

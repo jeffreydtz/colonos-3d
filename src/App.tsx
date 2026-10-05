@@ -1,7 +1,9 @@
 import { useEffect, useRef } from "react";
 import type { ClientView, ColorId, LobbyView } from "@shared/types";
 import { COLORS } from "@shared/types";
+import { installAudioUnlock } from "./audio/sfx";
 import { useArtHarness } from "./dev/useArtHarness";
+import { acceptLobby, gameViewPatch } from "./play/kickoff";
 import { joinSala, loadSession, saveSession, socket } from "./socket";
 import { Game } from "./screens/Game";
 import { Home } from "./screens/Home";
@@ -21,14 +23,30 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    return installAudioUnlock(() => {
+      useApp.getState().set({ sfxUnlocked: true });
+    });
+  }, []);
+
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sala = params.get("sala")?.toUpperCase() ?? "";
     if (sala) set({ code: sala });
 
-    const onLobby = (lobby: LobbyView) =>
-      set({ lobby, screen: "lobby", view: null, playerId: lobby.youId, code: lobby.roomCode });
-    const onView = (view: ClientView) =>
-      set({ view, screen: "game", lobby: null, playerId: view.youId, code: view.roomCode });
+    const onLobby = (lobby: LobbyView) => {
+      const cur = useApp.getState();
+      if (!acceptLobby(cur.view, lobby)) return;
+      set({
+        lobby,
+        screen: "lobby",
+        view: null,
+        kickoff: null,
+        kickoffKey: null,
+        playerId: lobby.youId,
+        code: lobby.roomCode,
+      });
+    };
+    const onView = (view: ClientView) => set(gameViewPatch(view, useApp.getState()));
     const onFx = (payload: { animations: string[] }) =>
       set({ lastFx: { animations: payload.animations, at: Date.now() } });
 
@@ -62,8 +80,7 @@ export default function App() {
       saveSession(r.code, r.token, name, color);
       if (r.view) {
         set({
-          screen: "game",
-          view: r.view,
+          ...gameViewPatch(r.view, useApp.getState()),
           token: r.token,
           playerId: r.playerId,
           code: r.code,
@@ -77,6 +94,9 @@ export default function App() {
       set({
         screen: "lobby",
         lobby: r.lobby,
+        view: null,
+        kickoff: null,
+        kickoffKey: null,
         token: r.token,
         playerId: r.playerId,
         code: r.code,

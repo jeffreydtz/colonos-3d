@@ -139,11 +139,20 @@ export function buildArtState(scene: ArtSceneId, seed = 42, playerCount?: number
     state.phase = "principal";
     state.dice = [3, 4];
     state.rollNo = 1;
+    state.diceThrow = 20261004;
     state.turnNumber = 4;
   }
   if (scene === "S5-victoria") {
+    const you = state.players[0]!;
+    // 3 ciudades (6) + ruta más larga (2) + ejército más grande (2) = la meta de 10.
+    for (const b of state.buildings) {
+      if (b.playerId === you.id && b.kind === "poblado") b.kind = "ciudad";
+    }
+    state.longestRoadPlayerId = you.id;
+    state.largestArmyPlayerId = you.id;
+    you.knightsPlayed = 3;
     state.phase = "fin";
-    state.winnerId = state.players[0]!.id;
+    state.winnerId = you.id;
   }
   if (scene === "S4-cartas" || scene === "S7-iconos") {
     const you = state.players[0]!;

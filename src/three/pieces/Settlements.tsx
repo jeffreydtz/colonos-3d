@@ -1,17 +1,26 @@
 import { useFrame } from "@react-three/fiber";
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import { reuseVec2, useDispose } from "../dispose";
 import * as THREE from "three";
 import { COLOR_HEX } from "@shared/constants";
 import type { ClientView, ColorId } from "@shared/types";
 import { reduceMotion } from "../../audio/sfx";
+import { pieceDrop, upgradeRise, type PiecePose } from "../../motion/curves";
+import { DURATION, motionMs } from "../../motion/tokens";
+import { anchorRise, introIds, introPlaying } from "../boardIntro";
 import { useApp } from "../../store";
 import { PLAYER_GLYPHS } from "../../theme/tokens";
-import { S, PIECE_SCALE, PIECE_Y, mergeSolid } from "../geo";
+import { S, PIECE_SCALE, PIECE_Y, TILE_TOP, mergeSolid } from "../geo";
+import { VERTEX_HIT_LIFT, VERTEX_HIT_R } from "../hits";
+import { bindInstanceTap } from "../instanceTap";
 import { getMaterials } from "../materials";
 
 const MAX_SETTLE = 30;
 const MAX_CITY = 24;
-const PLACE_MS = 280;
+
+function birthKey(kind: "poblado" | "ciudad", vertexId: string): string {
+  return `${kind}:${vertexId}`;
+}
 
 function gableHouse(halfW: number, wallH: number, peak: number, depth: number, bevel = 0.012): THREE.BufferGeometry {
   const s = new THREE.Shape();
@@ -144,18 +153,30 @@ export function Settlements({
   const col = useMemo(() => new THREE.Color(), []);
   const glyphs = useMemo(() => glyphAtlas(), []);
   const born = useRef(new Map<string, number>());
+  const painting = useRef(false);
 
   function stampBorn(tNow: number) {
-    for (const b of [...settle, ...cities]) {
-      if (!born.current.has(b.vertexId)) {
-        born.current.set(b.vertexId, freeze ? tNow - PLACE_MS : tNow);
-      }
+    for (const b of settle) {
+      const key = birthKey("poblado", b.vertexId);
+      if (!born.current.has(key)) born.current.set(key, tNow);
     }
+    for (const b of cities) {
+      const key = birthKey("ciudad", b.vertexId);
+      if (!born.current.has(key)) born.current.set(key, tNow);
+    }
+  }
+
+  function poseOf(kind: "poblado" | "ciudad", vertexId: string, tNow: number): PiecePose {
+    const ms = freeze ? 0 : motionMs(kind === "ciudad" ? DURATION.upgrade : DURATION.place, { lite, reduce: reduceMotion() });
+    if (ms === 0) return kind === "ciudad" ? upgradeRise(1, true) : pieceDrop(1, true);
+    const t0 = born.current.get(birthKey(kind, vertexId)) ?? tNow;
+    const u = Math.min(1, (tNow - t0) / ms);
+    return kind === "ciudad" ? upgradeRise(u) : pieceDrop(u);
   }
 
   function place(
     mesh: THREE.InstancedMesh | null,
-    items: typeof settle,
+    items: ClientView["buildings"],
     y: number,
     scale: number,
     tNow: number,
@@ -164,14 +185,15 @@ export function Settlements({
     items.forEach((b, i) => {
       const v = view.vertices.find((x) => x.id === b.vertexId);
       if (!v) return;
-      const t0 = born.current.get(b.vertexId) ?? tNow;
-      const u = freeze ? 1 : Math.min(1, (tNow - t0) / PLACE_MS);
-      // Entra con un pequeño rebote, como si la apoyaras en el vértice.
-      const c1 = 1.35;
-      const ease = u >= 1 ? 1 : 1 + (c1 + 1) * (u - 1) ** 3 + c1 * (u - 1) ** 2;
-      dummy.position.set(v.x * S, y, v.y * S);
+      const pose = poseOf(b.kind, b.vertexId, tNow);
+      const lift = anchorRise(introIds(view.hexes), view.hexes, v.hexIds, tNow, { lite, reduce: reduceMotion() });
+      dummy.position.set(v.x * S, y + pose.y + lift, v.y * S);
       dummy.rotation.set(0, (seatOf.get(b.playerId) ?? 0) * 0.4, 0);
-      dummy.scale.setScalar(Math.max(0.04, scale * ease));
+      dummy.scale.set(
+        Math.max(0.02, scale * pose.sx),
+        Math.max(0.02, scale * pose.sy),
+        Math.max(0.02, scale * pose.sz),
+      );
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
       col.set(colorOf.get(b.playerId) ?? "#ccc");
@@ -183,16 +205,19 @@ export function Settlements({
     mesh.computeBoundingSphere();
   }
 
-  function layoutGlyphs() {
+  function layoutGlyphs(tNow: number) {
     const gMesh = gRef.current;
     if (!gMesh) return;
     const all = [...settle, ...cities];
     all.forEach((b, i) => {
       const v = view.vertices.find((x) => x.id === b.vertexId);
       if (!v) return;
-      dummy.position.set(v.x * S, PIECE_Y + (b.kind === "ciudad" ? 0.3 : 0.282) * PIECE_SCALE, v.y * S);
+      const pose = poseOf(b.kind, b.vertexId, tNow);
+      const lift = anchorRise(introIds(view.hexes), view.hexes, v.hexIds, tNow, { lite, reduce: reduceMotion() });
+      const roof = (b.kind === "ciudad" ? 0.3 : 0.282) * PIECE_SCALE * pose.sy;
+      dummy.position.set(v.x * S, PIECE_Y + pose.y + lift + roof, v.y * S);
       dummy.rotation.set(-Math.PI / 2, 0, 0);
-      dummy.scale.setScalar(1);
+      dummy.scale.setScalar(Math.max(0.02, pose.sx));
       dummy.updateMatrix();
       gMesh.setMatrixAt(i, dummy.matrix);
     });
@@ -205,7 +230,7 @@ export function Settlements({
       cells[i * 2] = (seat % 6) / 6;
       cells[i * 2 + 1] = 0;
     });
-    gMesh.geometry.setAttribute("aCell", new THREE.InstancedBufferAttribute(cells, 2));
+    reuseVec2(gMesh.geometry, "aCell", cells, (MAX_SETTLE + MAX_CITY) * 2);
   }
 
   function placeAll(tNow: number) {
@@ -214,16 +239,31 @@ export function Settlements({
     place(sOut.current, settle, PIECE_Y, PIECE_SCALE * 1.025, tNow);
     place(cRef.current, cities, PIECE_Y, PIECE_SCALE, tNow);
     place(cOut.current, cities, PIECE_Y, PIECE_SCALE * 1.02, tNow);
+    layoutGlyphs(tNow);
+  }
+
+  function stillPlacing(tNow: number): boolean {
+    const opts = { lite, reduce: reduceMotion() };
+    const placeMs = motionMs(DURATION.place, opts);
+    const cityMs = motionMs(DURATION.upgrade, opts);
+    if (placeMs > 0 && settle.some((b) => tNow - (born.current.get(birthKey("poblado", b.vertexId)) ?? tNow) <= placeMs)) {
+      return true;
+    }
+    return cityMs > 0 && cities.some((b) => tNow - (born.current.get(birthKey("ciudad", b.vertexId)) ?? tNow) <= cityMs);
   }
 
   useLayoutEffect(() => {
     placeAll(performance.now());
-    layoutGlyphs();
   }, [settle, cities, view.vertices, colorOf, seatOf, freeze, lite]);
 
   useFrame(() => {
     if (freeze) return;
-    placeAll(performance.now());
+    const tNow = performance.now();
+    const opts = { lite, reduce: reduceMotion() };
+    const live = stillPlacing(tNow) || introPlaying(introIds(view.hexes), view.hexes, tNow, opts);
+    // Un cuadro de más: si el rAF se salta el instante final, la pose queda en u = 1.
+    if (live || painting.current) placeAll(tNow);
+    painting.current = live;
   });
 
   const glyphMat = useMemo(() => {
@@ -243,6 +283,12 @@ export function Settlements({
     };
     return m;
   }, [glyphs]);
+  useDispose(hGeo);
+  useDispose(cGeo);
+  useDispose(pieceMat);
+  useDispose(outlineMat);
+  useDispose(glyphs);
+  useDispose(glyphMat);
 
   return (
     <group>
@@ -270,24 +316,32 @@ export function GhostSpots({
   spots,
   accent,
   onPick,
+  selectedId = null,
 }: {
   spots: Array<{ id: string; x: number; y: number }>;
   accent: string;
   onPick: (id: string) => void;
+  selectedId?: string | null;
 }) {
   const ring = useRef<THREE.InstancedMesh>(null);
   const rim = useRef<THREE.InstancedMesh>(null);
   const hit = useRef<THREE.InstancedMesh>(null);
+  const hoverId = useRef<string | null>(null);
+  const hoverMix = useRef(0);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const freeze = useApp((s) => s.artFreeze);
   const layout = useCallback(
-    (scale: number) => {
+    (scale: number, mix: number) => {
       for (const mesh of [ring.current, rim.current, hit.current]) {
         if (!mesh) continue;
         spots.forEach((s, i) => {
-          dummy.position.set(s.x * S, PIECE_Y + 0.006, s.y * S);
-          dummy.rotation.set(-Math.PI / 2, 0, 0);
-          dummy.scale.setScalar(mesh === hit.current ? 1 : scale);
+          const isHit = mesh === hit.current;
+          const hot = !isHit && s.id === selectedId;
+          const hovered = !isHit && !hot && s.id === hoverId.current;
+          const pop = hot ? 1.55 : hovered ? 1 + 0.28 * mix : 1;
+          dummy.position.set(s.x * S, isHit ? TILE_TOP + VERTEX_HIT_LIFT : PIECE_Y + 0.006, s.y * S);
+          dummy.rotation.set(isHit ? 0 : -Math.PI / 2, 0, 0);
+          dummy.scale.setScalar(isHit ? 1 : scale * pop);
           dummy.updateMatrix();
           mesh.setMatrixAt(i, dummy.matrix);
         });
@@ -296,16 +350,23 @@ export function GhostSpots({
         mesh.computeBoundingSphere();
       }
     },
-    [spots, dummy],
+    [spots, dummy, selectedId],
   );
   useLayoutEffect(() => {
-    layout(1);
+    layout(1, hoverMix.current);
   }, [layout]);
   useFrame(({ clock }) => {
-    if (freeze || reduceMotion() || spots.length === 0) return;
-    layout(1 + Math.sin(clock.elapsedTime * 3.4) * 0.09);
+    if (freeze || spots.length === 0) return;
+    const reduce = reduceMotion();
+    const want = hoverId.current ? 1 : 0;
+    const prev = hoverMix.current;
+    hoverMix.current = reduce ? want : prev + (want - prev) * 0.22;
+    if (reduce && Math.abs(hoverMix.current - prev) < 0.001 && want === 0) return;
+    const pulse = reduce ? 1 : 1 + Math.sin(clock.elapsedTime * 2.4) * 0.05;
+    layout(pulse, hoverMix.current);
   });
   if (spots.length === 0) return null;
+  const selected = selectedId ? spots.find((s) => s.id === selectedId) : undefined;
   return (
     <group>
       <instancedMesh ref={rim} args={[undefined, undefined, Math.max(1, spots.length)]} raycast={() => {}} renderOrder={2}>
@@ -316,28 +377,37 @@ export function GhostSpots({
         <ringGeometry args={[0.148, 0.168, 28]} />
         <meshBasicMaterial color={accent} depthWrite={false} />
       </instancedMesh>
+      {selected && (
+        <mesh
+          position={[selected.x * S, PIECE_Y + 0.02, selected.y * S]}
+          rotation={[-Math.PI / 2, 0, 0]}
+          raycast={() => {}}
+        >
+          <ringGeometry args={[0.19, 0.3, 32]} />
+          <meshBasicMaterial color="#fff7d6" depthWrite={false} transparent opacity={0.95} />
+        </mesh>
+      )}
       <instancedMesh
         ref={hit}
         args={[undefined, undefined, Math.max(1, spots.length)]}
-        onClick={(e) => {
+        frustumCulled={false}
+        onPointerDown={bindInstanceTap((idx) => spots[idx]?.id, onPick)}
+        onPointerMove={(e) => {
           e.stopPropagation();
           const idx = e.instanceId;
-          const id = idx != null ? spots[idx]?.id : undefined;
-          if (id) onPick(id);
-        }}
-        onPointerOver={(e) => {
-          e.stopPropagation();
+          hoverId.current = idx != null ? (spots[idx]?.id ?? null) : null;
           document.body.style.cursor = "pointer";
         }}
         onPointerOut={() => {
+          hoverId.current = null;
           document.body.style.cursor = "default";
         }}
       >
-        <circleGeometry args={[0.34, 16]} />
+        <sphereGeometry args={[VERTEX_HIT_R, 14, 10]} />
         <meshBasicMaterial transparent opacity={0} color={accent} depthWrite={false} />
       </instancedMesh>
     </group>
   );
 }
 
-export const PIECE_CAPS = { settle: MAX_SETTLE, city: MAX_CITY, placeMs: PLACE_MS };
+export const PIECE_CAPS = { settle: MAX_SETTLE, city: MAX_CITY, placeMs: DURATION.road };

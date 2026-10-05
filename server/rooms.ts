@@ -14,10 +14,11 @@ import type {
   ChatMessage,
   ColorId,
   GameState,
+  KickoffInfo,
   LobbyView,
 } from "../shared/types.ts";
 import { applyBotStep } from "./bots.ts";
-import { applyAction, createGame } from "./engine.ts";
+import { appendLog, applyAction, createGame } from "./engine.ts";
 import { currentPlayer, legalMoves, legalSettlementVertices } from "./legal.ts";
 import { pickDiscard } from "./resources.ts";
 import { parseCreatePayload, parseJoinPayload } from "./validate.ts";
@@ -56,6 +57,9 @@ export interface Room {
   deadlineBeforeBusy: number | null;
   /** Bots que entraron seguidos: se anuncian en una sola línea mientras siga siendo la última del chat. */
   botJoin: { chatId: string; names: string[] } | null;
+  /** Cartel de arranque. Se manda con la vista mientras no venza. */
+  kickoff: KickoffInfo | null;
+  kickoffUntil: number;
 }
 
 export const MAX_ROOMS = 200;
@@ -185,6 +189,8 @@ export function createRoom(
     unboxExtended: false,
     deadlineBeforeBusy: null,
     botJoin: null,
+    kickoff: null,
+    kickoffUntil: 0,
   };
   rooms.set(code, room);
   if (ip) noteRoomCreate(ip, code);
@@ -449,11 +455,23 @@ export function startGame(
   if (room.seats.length < MIN_PLAYERS) {
     return { ok: false, error: `Hacen falta al menos ${MIN_PLAYERS} jugadores.` };
   }
+  const players = room.seats.map((s) => ({ id: s.id, name: s.name, color: s.color }));
   room.game = createGame({
     victoryPoints: room.victoryPoints,
-    seed: opts?.seed,
-    players: room.seats.map((s) => ({ id: s.id, name: s.name, color: s.color })),
+    seed: process.env.NODE_ENV === "production" ? undefined : opts?.seed,
+    players,
   });
+  room.kickoff = {
+    starterId: room.game.players[0]?.id ?? room.hostId,
+    boardKind: room.game.boardKind,
+    order: room.seats.map((s) => ({
+      id: s.id,
+      name: s.name,
+      color: s.color,
+      isBot: s.isBot,
+    })),
+  };
+  room.kickoffUntil = Date.now() + 15_000;
   const kind = boardKindForCount(room.seats.length);
   pushChat(
     room,
@@ -602,7 +620,8 @@ export function gameView(room: Room, youId: string) {
     connected: connectedSet(room),
     bots: botSet(room),
     deadlineAt: room.deadlineAt,
-    unboxPlayerId: room.unboxPlayerId,
+    unboxPlayerId: room.unboxPlayerId === youId ? room.unboxPlayerId : null,
+    kickoff: room.kickoff && Date.now() < room.kickoffUntil ? room.kickoff : null,
   });
 }
 
@@ -764,9 +783,47 @@ export function maybeResolveDisconnect(room: Room, playerId: string): void {
   scheduleBots(room);
 }
 
+function noteTimeout(room: Room, text: string, playerId: string): void {
+  pushChat(room, null, "Sistema", text);
+  if (room.game) appendLog(room.game, text, playerId);
+}
+
+/** Un solo paso de colocación: poblado o camino, nunca los dos en el mismo timeout. */
+function timeoutOneSetupStep(room: Room, playerId: string, name: string): void {
+  if (!room.game) return;
+  const actor = currentPlayer(room.game);
+  if (!actor || actor.id !== playerId) return;
+  const before = room.game.phase;
+  const buildings = room.game.buildings.length;
+  const roads = room.game.roads.length;
+  if (!autoAct(room, playerId)) {
+    noteTimeout(room, `${name} no jugó a tiempo y no había una jugada legal.`, playerId);
+    return;
+  }
+  const placedHouse = room.game.buildings.length > buildings;
+  const placedRoad = room.game.roads.length > roads;
+  const still = currentPlayer(room.game)?.id === playerId;
+  const next = currentPlayer(room.game)?.name ?? "el siguiente";
+  let text = `${name} no jugó a tiempo: el servidor hizo un solo paso.`;
+  if (placedHouse && room.game.phase === "colocacion_camino") {
+    text = `${name} no eligió a tiempo: el servidor puso el poblado. Falta el camino, en otro paso.`;
+  } else if (placedRoad && still && room.game.phase === "colocacion_poblado") {
+    text = `${name} no eligió a tiempo: el servidor puso el camino. Sigue ${name} con el segundo poblado: primero la casita.`;
+  } else if (placedRoad) {
+    text = `${name} no eligió a tiempo: el servidor puso el camino. Turno de ${next}.`;
+  } else if (before === "colocacion_poblado") {
+    text = `${name} no eligió a tiempo: el servidor no pudo poner el poblado.`;
+  }
+  noteTimeout(room, text, playerId);
+}
+
 function skipStuckPlayer(room: Room, playerId: string, note: string): void {
   if (!room.game) return;
   const name = room.game.players.find((p) => p.id === playerId)?.name ?? "Alguien";
+  if (room.game.phase === "colocacion_poblado" || room.game.phase === "colocacion_camino") {
+    timeoutOneSetupStep(room, playerId, name);
+    return;
+  }
   let progressed = false;
   for (let i = 0; i < 14; i++) {
     if (!room.game || room.game.phase === "fin") break;
@@ -781,7 +838,7 @@ function skipStuckPlayer(room: Room, playerId: string, note: string): void {
     if (!autoAct(room, playerId)) break;
     progressed = true;
   }
-  if (progressed) pushChat(room, null, "Sistema", note.replace("Alguien", name));
+  if (progressed) noteTimeout(room, note.replace("Alguien", name), playerId);
 }
 
 export function promoteToBot(room: Room, playerId: string): boolean {
@@ -815,7 +872,7 @@ export function applyIdleTimeout(room: Room): void {
     scheduleBots(room);
     return;
   }
-  skipStuckPlayer(room, actor.id, `${actor.name} no jugó a tiempo: el servidor siguió.`);
+  skipStuckPlayer(room, actor.id, `${actor.name} no jugó a tiempo: el servidor cerró este paso y la mesa siguió.`);
   scheduleBots(room);
 }
 

@@ -1,9 +1,11 @@
 import { useEffect } from "react";
 import type { ClientView } from "@shared/types";
+import { previewOrRun } from "../play/commitAction";
 import { skipDiceHold } from "../play/diceHold";
 import { sendAction } from "../socket";
 import { useApp } from "../store";
 import { tradeTabFor } from "../play/actionTabs";
+import { FocusTrap } from "./useFocusTrap";
 
 /** Atajos de partida. Ignora inputs. */
 export function Hotkeys({ view }: { view: ClientView }) {
@@ -18,7 +20,7 @@ export function Hotkeys({ view }: { view: ClientView }) {
       const k = e.key.toLowerCase();
       if (k === "escape") {
         const ui = useApp.getState().diceUi;
-        set({ shortcutsOpen: false, sheet: null, bankTradeFrom: null, diceUi: skipDiceHold(ui) });
+        set({ shortcutsOpen: false, sheet: null, bankTradeFrom: null, pending: null, diceUi: skipDiceHold(ui) });
         return;
       }
       if (k === "?" || k === "h") {
@@ -34,9 +36,7 @@ export function Hotkeys({ view }: { view: ClientView }) {
       }
       if (k === "p" && view.legal.canEndTurn) {
         e.preventDefault();
-        void sendAction({ type: "end_turn" }).then((r) => {
-          if (!r.ok) set({ toast: r.error ?? "No se pudo pasar." });
-        });
+        void previewOrRun({ kind: "end_turn" });
       }
       if (k === "b") {
         e.preventDefault();
@@ -67,8 +67,13 @@ export function ShortcutsHelp() {
   if (!open) return null;
   return (
     <div className="pointer-events-auto absolute inset-0 z-50 flex items-center justify-center bg-black/55 p-4" data-testid="shortcuts-help">
-      <div className="panel w-full max-w-sm rounded-2xl p-4">
-        <p className="display mb-2 text-lg">Atajos</p>
+      <FocusTrap
+        className="panel w-full max-w-sm rounded-2xl p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shortcuts-title"
+      >
+        <p id="shortcuts-title" className="display mb-2 text-lg">Atajos</p>
         <ul className="space-y-1 text-sm text-amber-50">
           <li><kbd className="kbd">R</kbd> Tirar dados</li>
           <li><kbd className="kbd">P</kbd> Pasar turno</li>
@@ -77,13 +82,13 @@ export function ShortcutsHelp() {
           <li><kbd className="kbd">M</kbd> Mesa (log / chat)</li>
           <li><kbd className="kbd">C</kbd> Centrar cámara</li>
           <li><kbd className="kbd">?</kbd> Esta ayuda</li>
-          <li><kbd className="kbd">Esc</kbd> Cerrar</li>
+          <li><kbd className="kbd">Esc</kbd> Cerrar o cancelar la acción marcada</li>
         </ul>
         <p className="mt-2 text-[11px] text-amber-100/70">En la tira de mano: tocá un recurso para cambiarlo al banco (2:1 / 3:1 / 4:1).</p>
         <button className="mt-3 min-h-11 w-full rounded-xl bg-amber-200 font-semibold text-stone-900" onClick={() => set({ shortcutsOpen: false })}>
           Listo
         </button>
-      </div>
+      </FocusTrap>
     </div>
   );
 }

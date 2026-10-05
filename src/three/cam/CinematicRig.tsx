@@ -8,9 +8,17 @@ import { useApp } from "../../store";
 import { TILE_TOP } from "../geo";
 import type { BoardLayout, Framing } from "../layout";
 import { fitBoard, freeAspect, measureHudInsets, type SafeInsets } from "./fit";
+import { CAMERA_SHARP, DURATION } from "../../motion/tokens";
+import {
+  RESTORE_SHARPNESS,
+  cameraCueForActor,
+  cameraEventStamp,
+  cueAfterEvent,
+  shouldKeepHeld,
+} from "../../play/spotlight";
 import { cuePose, lensFor, type Pose } from "./poses";
 
-type Cue = "tactica" | "dados" | "ladron" | "intro" | "volver";
+type Cue = "tactica" | "dados" | "ladron" | "intro" | "volver" | "restaurar";
 
 export type CinemaControls = {
   reset: () => void;
@@ -50,8 +58,11 @@ export function CinematicRig({
   const cue = useRef<Cue>("intro");
   const until = useRef(0);
   const userMoved = useRef(false);
+  /** Vista del jugador justo antes de una toma automática. */
+  const held = useRef<Pose | null>(null);
+  /** Toma que el jugador cortó con el arrastre: no se vuelve a disparar. */
+  const skipped = useRef<string | null>(null);
   const freezeApplied = useRef(false);
-  const lastTurn = useRef(view.currentPlayerId);
   const refit = useRef<(insets: SafeInsets) => void>(() => {});
   const robber = view.hexes.find((h) => h.id === view.robberHexId);
   const calm = lite || reduceMotion();
@@ -89,7 +100,7 @@ export function CinematicRig({
         controls?.target.copy(t);
         controls?.update?.();
         cue.current = "intro";
-        until.current = performance.now() + 1700;
+        until.current = performance.now() + DURATION.cameraIntro;
         return;
       }
       if (first) {
@@ -133,7 +144,10 @@ export function CinematicRig({
     if (!controls?.addEventListener) return;
     const onStart = () => {
       userMoved.current = true;
-      if (cue.current !== "dados") cue.current = "tactica";
+      held.current = null;
+      const live = useApp.getState();
+      skipped.current = cameraEventStamp(live.diceUi.presenting, live.lastFx?.at ?? null);
+      cue.current = "tactica";
     };
     controls.addEventListener("start", onStart);
     return () => controls.removeEventListener?.("start", onStart);
@@ -142,27 +156,35 @@ export function CinematicRig({
   useEffect(() => {
     if (!recenterNonce || freeze) return;
     userMoved.current = false;
+    held.current = null;
     cue.current = "volver";
   }, [recenterNonce, freeze]);
 
   useEffect(() => {
-    if (freeze || view.currentPlayerId === lastTurn.current) return;
-    lastTurn.current = view.currentPlayerId;
-    if (cue.current === "tactica" && !userMoved.current) cue.current = "volver";
-  }, [view.currentPlayerId, freeze]);
-
-  useEffect(() => {
     if (freeze || calm) return;
-    if (presenting) {
+    const live = useApp.getState().view;
+    if (!live) return;
+    // Construir, comerciar, cartas y el turno ajeno no entran: no hay toma para eso.
+    const kind = presenting ? "dice" : lastFx?.animations.includes("robber") ? "robber" : null;
+    if (!kind) return;
+    const stamp = cameraEventStamp(presenting, lastFx?.at ?? null);
+    if (skipped.current === stamp) return;
+    const next = cameraCueForActor(live.youId, live.currentPlayerId, kind);
+    // Acción ajena: no hay toma y no se toca la vista guardada.
+    if (next !== "dados" && next !== "ladron") return;
+    const controls = controlsRef.current;
+    if (controls && !shouldKeepHeld(cue.current)) {
+      const cam = get().camera;
+      held.current = { pos: cam.position.clone(), target: controls.target.clone() };
+    }
+    if (cue.current !== next && next === "dados") {
       cue.current = "dados";
-      until.current = performance.now() + 2600;
-      return;
-    }
-    if (lastFx?.animations.includes("robber")) {
+      until.current = performance.now() + DURATION.cameraDice;
+    } else if (cue.current !== next && next === "ladron") {
       cue.current = "ladron";
-      until.current = performance.now() + 1500;
+      until.current = performance.now() + DURATION.cameraRobber;
     }
-  }, [presenting, lastFx, freeze, calm]);
+  }, [presenting, lastFx, freeze, calm, get, controlsRef]);
 
   useFrame((state, dt) => {
     const controls = controlsRef.current;
@@ -181,26 +203,52 @@ export function CinematicRig({
     }
     const now = performance.now();
     if ((cue.current === "dados" || cue.current === "ladron" || cue.current === "intro") && now > until.current) {
-      cue.current = cue.current === "intro" ? "volver" : userMoved.current ? "tactica" : "volver";
+      cue.current = cue.current === "intro" ? "volver" : cueAfterEvent(held.current != null, userMoved.current);
     }
     if (cue.current === "tactica") return;
+    const back = cue.current === "restaurar" ? held.current : null;
     if (calm) {
-      if (cue.current === "volver") {
-        camera.position.copy(h.pos);
-        controls.target.copy(h.target);
+      const snap = back ?? (cue.current === "volver" ? h : null);
+      if (snap) {
+        camera.position.copy(snap.pos);
+        controls.target.copy(snap.target);
         controls.update?.();
+        if (back) held.current = null;
         cue.current = "tactica";
       }
       return;
     }
     const want =
-      cue.current === "dados" || cue.current === "ladron" ? cuePose(cue.current, h, frame.tray, robber, dicePose.current) : h;
-    const k = 1 - Math.exp(-dt * (cue.current === "intro" ? 2.2 : 4.2));
+      cue.current === "dados" || cue.current === "ladron"
+        ? cuePose(cue.current, h, frame.tray, robber, dicePose.current)
+        : (back ?? h);
+    const sharp = cue.current === "intro" ? CAMERA_SHARP.intro : cue.current === "restaurar" ? RESTORE_SHARPNESS : CAMERA_SHARP.event;
+    const k = 1 - Math.exp(-dt * sharp);
     camera.position.lerp(want.pos, k);
     controls.target.lerp(want.target, k);
     controls.update?.();
-    if (cue.current === "volver" && camera.position.distanceTo(h.pos) < 0.02 && controls.target.distanceTo(h.target) < 0.02) {
+    const settled =
+      (cue.current === "volver" && camera.position.distanceTo(h.pos) < 0.02 && controls.target.distanceTo(h.target) < 0.02) ||
+      (cue.current === "restaurar" &&
+        back != null &&
+        camera.position.distanceTo(back.pos) < 0.02 &&
+        controls.target.distanceTo(back.target) < 0.02);
+    if (settled) {
+      if (cue.current === "restaurar") held.current = null;
       cue.current = "tactica";
+    }
+    if (import.meta.env.DEV) {
+      const w = window as Window & {
+        __colonosCam?: { x: number; y: number; z: number; tx: number; ty: number; tz: number };
+      };
+      w.__colonosCam = {
+        x: camera.position.x,
+        y: camera.position.y,
+        z: camera.position.z,
+        tx: controls.target.x,
+        ty: controls.target.y,
+        tz: controls.target.z,
+      };
     }
   });
   return null;

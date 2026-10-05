@@ -142,18 +142,23 @@ describe("privacidad del log y revelado", () => {
     expect(viewB.events.some((e) => e.text.includes("punto_victoria"))).toBe(false);
   });
 
-  it("el robo no dice qué recurso se llevó", () => {
+  it("el robo público no dice qué recurso se llevó", () => {
     const e: LogEvent = {
       id: 1,
       t: 0,
-      text: "Luz le afanó una carta a Tomi.",
+      text: "Luz le robó 1 carta a Tomi.",
       kind: "ladron",
       playerId: "a",
       otherId: "b",
-      icons: [],
+      icons: [{ kind: "res", id: "madera", n: 1 }],
+      resources: { madera: 1 },
     };
-    const pub = publicLog(e);
-    expect(pub.text).not.toMatch(/madera|ladrillo|lana|trigo|mineral/);
+    const pub = publicLog(e, "b");
+    expect(pub).not.toBeNull();
+    expect(pub!.text).toBe("Luz le robó 1 carta a Tomi.");
+    expect(pub!.resources).toBeUndefined();
+    expect(pub!.icons).toEqual([]);
+    expect(JSON.stringify(pub)).not.toMatch(/madera|ladrillo|lana|trigo|mineral|Madera|Piedra/i);
   });
 
   it("el descarte no revela tipos de recursos", () => {

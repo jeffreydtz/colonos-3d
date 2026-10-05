@@ -71,7 +71,10 @@ describe("ronda 3 fichas y piezas", () => {
     expect(settle).toContain("PLAYER_GLYPHS");
     expect(settle).toContain("const MAX_SETTLE = 30");
     expect(settle).toContain("const MAX_CITY = 24");
-    expect(settle).toContain("const PLACE_MS = 280");
+    expect(settle).toContain("pieceDrop");
+    expect(settle).toContain("upgradeRise");
+    expect(settle).toContain("DURATION.place");
+    expect(settle).toContain("DURATION.upgrade");
     expect(settle).toContain("techo a dos aguas");
     expect(settle).toContain("chimney");
     expect(settle).toContain("tower");
@@ -87,7 +90,9 @@ describe("ronda 3 fichas y piezas", () => {
     expect(ports).toContain("paintResource");
     const robber = readFileSync("src/three/pieces/Robber.tsx", "utf8");
     expect(robber).toContain("mat.robber");
-    expect(robber).toContain("export const ROBBER_JUMP_MS = 550");
+    expect(robber).toContain("export const ROBBER_JUMP_MS = DURATION.robber");
+    expect(robber).toContain("robberPose");
+    expect(roads).toContain("roadLay");
   });
 
   it("HUD muestra glifo Okabe por asiento y el ladrón marca el hex bloqueado", () => {

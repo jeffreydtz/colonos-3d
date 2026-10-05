@@ -6,7 +6,7 @@ import { ACESFilmicToneMapping } from "three";
 import { parseHexId } from "@shared/hex";
 import type { ClientView } from "@shared/types";
 import { diceHeld } from "../play/diceHold";
-import { sendAction } from "../socket";
+import { previewOrRun } from "../play/commitAction";
 import { useApp } from "../store";
 import { producingHexes } from "../play/producing";
 import type { ThemeId } from "../theme/tokens";
@@ -41,65 +41,77 @@ export function BoardScene({ view }: { view: ClientView }) {
 
   async function onHex(id: string) {
     const knightArmed = useApp.getState().knightArmed;
+    const listed = legal.robberHexes.includes(id) || legal.hexes.includes(id);
     if (knightArmed && legal.canPlayKnight) {
       if (!legal.robberHexes.includes(id) && id === view.robberHexId) {
         set({ toast: "El ladrón tiene que cambiar de hexágono.", knightArmed: false });
         return;
       }
-      const r = await sendAction({ type: "play_knight", hexId: id, stealFromId: null });
-      set({ toast: r.error ?? null, knightArmed: false });
+      if (!listed) {
+        set({ toast: "Ahí no podés poner el ladrón." });
+        return;
+      }
+      await previewOrRun({ kind: "robber", id, knight: true });
       return;
     }
     if (legal.stealFrom.length) {
       set({ hint: "Elegí a quién le afanás." });
       return;
     }
-    if (!legal.robberHexes.includes(id) && !legal.hexes.includes(id)) {
+    if (!listed) {
       if (view.phase === "ladron" || knightArmed) {
         set({ toast: "Ahí no podés poner el ladrón." });
       }
       return;
     }
-    const r = await sendAction({ type: "move_robber", hexId: id, stealFromId: null });
-    set({ toast: r.error ?? null });
+    await previewOrRun({ kind: "robber", id, knight: false });
   }
 
   async function onVertex(id: string) {
+    if (view.phase === "colocacion_camino") {
+      set({ toast: "Ahora el camino: tocá una arista del poblado, no otra casita." });
+      return;
+    }
     if (view.phase === "colocacion_poblado" && legal.vertices.includes(id)) {
-      const r = await sendAction({ type: "place_settlement", vertexId: id });
-      if (!r.ok) set({ toast: r.error ?? "Ahí no se puede colocar." });
+      await previewOrRun({ kind: "vertex", id, build: "setup" });
       return;
     }
     if (legal.cityVertices.includes(id)) {
-      const r = await sendAction({ type: "build_city", vertexId: id });
-      if (!r.ok) set({ toast: r.error ?? "No se pudo mejorar a ciudad." });
+      await previewOrRun({ kind: "vertex", id, build: "ciudad" });
       return;
     }
     if (legal.vertices.includes(id)) {
-      const r = await sendAction({ type: "build_settlement", vertexId: id });
-      if (!r.ok) set({ toast: r.error ?? "Ahí no se puede construir." });
+      await previewOrRun({ kind: "vertex", id, build: "poblado" });
       return;
     }
     set({ toast: "Ahí no se puede construir." });
   }
 
   async function onEdge(id: string) {
-    const kind = view.phase === "colocacion_camino" ? "place_road" : "build_road";
+    if (view.phase === "colocacion_poblado") {
+      set({ toast: "Primero el poblado: tocá un vértice libre. El camino viene después." });
+      return;
+    }
     if (!legal.edges.includes(id)) {
       set({ toast: "Ahí no podés tender un camino." });
       return;
     }
-    const r = await sendAction({ type: kind, edgeId: id });
-    if (!r.ok) set({ toast: r.error ?? "Ahí no podés tender un camino." });
+    const build = view.phase === "colocacion_camino" ? "setup" : view.pendingRoadBuilding > 0 ? "carta" : "camino";
+    await previewOrRun({ kind: "edge", id, build });
   }
 
   const knightArmed = useApp((s) => s.knightArmed);
   const graphics = useApp((s) => s.graphics);
   const theme = useApp((s) => s.theme);
+  const pending = useApp((s) => s.pending);
   const lite = graphics === "liviano";
-  const robberSelectable = new Set(
-    view.phase === "ladron" || knightArmed ? [...legal.robberHexes, ...legal.hexes] : [],
-  );
+  const robberSelectable = useMemo(() => {
+    if (view.phase !== "ladron" && !knightArmed) return new Set<string>();
+    return new Set([...legal.robberHexes, ...legal.hexes]);
+  }, [view.phase, knightArmed, legal]);
+  const selectedVertex = pending?.kind === "vertex" ? pending.id : null;
+  const selectedEdge = pending?.kind === "edge" ? pending.id : null;
+  const chosenHex = pending?.kind === "robber" ? pending.id : undefined;
   const diceUi = useApp((s) => s.diceUi);
   const producing = useMemo(() => {
     if (!artFreeze && diceHeld(diceUi)) return new Set<string>();
@@ -124,10 +136,11 @@ export function BoardScene({ view }: { view: ClientView }) {
     <Canvas
       shadows={lite ? false : "soft"}
       camera={{ position: big ? [...CAM_EXPANSION] : [...CAM_CLASSIC], fov: CAM_FOV }}
-      style={{ width: "100%", height: "100%" }}
+      style={{ width: "100%", height: "100%", touchAction: "none" }}
       dpr={lite ? [1, 1] : [1, 1.5]}
       onCreated={({ gl }) => {
         gl.toneMapping = ACESFilmicToneMapping;
+        gl.domElement.style.touchAction = "none";
       }}
       gl={{
         antialias: !lite,
@@ -146,6 +159,9 @@ export function BoardScene({ view }: { view: ClientView }) {
         producing={producing}
         settleSpots={settleSpots}
         upgradeSpots={upgradeSpots}
+        selectedVertex={selectedVertex}
+        selectedEdge={selectedEdge}
+        chosenHex={chosenHex}
         onHex={(id) => void onHex(id)}
         onVertex={(id) => void onVertex(id)}
         onEdge={(id) => void onEdge(id)}
@@ -164,6 +180,9 @@ function SceneContent({
   producing,
   settleSpots,
   upgradeSpots,
+  selectedVertex,
+  selectedEdge,
+  chosenHex,
   onHex,
   onVertex,
   onEdge,
@@ -177,6 +196,9 @@ function SceneContent({
   producing: Set<string>;
   settleSpots: Spot[];
   upgradeSpots: Spot[];
+  selectedVertex: string | null;
+  selectedEdge: string | null;
+  chosenHex?: string;
   onHex: (id: string) => void;
   onVertex: (id: string) => void;
   onEdge: (id: string) => void;
@@ -208,6 +230,7 @@ function SceneContent({
         highlighted={highlighted}
         producing={producing}
         robberHexId={view.robberHexId}
+        chosenId={chosenHex}
         onHex={onHex}
         lite={lite}
       />
@@ -215,11 +238,18 @@ function SceneContent({
       <Tokens hexes={view.hexes} lite={lite} />
       <Robber hexes={view.hexes} robberHexId={view.robberHexId} lite={lite} freeze={artFreeze} />
       <Ports vertices={view.vertices} lite={lite} />
-      <Roads view={view} lite={lite} onEdge={onEdge} />
+      <Roads view={view} lite={lite} onEdge={onEdge} selectedId={selectedEdge} />
       <Settlements view={view} lite={lite} freeze={artFreeze} />
-      <GhostSpots spots={settleSpots} accent="#facc15" onPick={onVertex} />
-      <GhostSpots spots={upgradeSpots} accent="#67e8f9" onPick={onVertex} />
-      <DiceRig values={view.dice} lite={lite} freeze={artFreeze} tray={frame.tray} />
+      <GhostSpots spots={settleSpots} accent="#facc15" onPick={onVertex} selectedId={selectedVertex} />
+      <GhostSpots spots={upgradeSpots} accent="#67e8f9" onPick={onVertex} selectedId={selectedVertex} />
+      <DiceRig
+        values={view.dice}
+        throwSeed={view.diceThrow}
+        rollNo={view.rollNo}
+        lite={lite}
+        freeze={artFreeze}
+        tray={frame.tray}
+      />
       <ProductionSparks view={view} lite={lite} />
       <RobberPuff view={view} lite={lite} />
       <ProducerGlow view={view} lite={lite} />

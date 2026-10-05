@@ -32,8 +32,8 @@ export const CRAG_H = 0.36;
 /**
  * Macizo detrás de la ficha (lado lejano a la cámara, −z): dos cumbres nevadas en las esquinas de
  * atrás, cada una con un hombro pelado pegado hacia el costado (las bases se solapan y forman un
- * cordón), una loma baja adelante de un lado y una piedra chica. El pasillo justo detrás de la
- * ficha queda libre para el ladrón. Sólo las cumbres llevan nieve.
+ * cordón), una loma baja adelante de un lado y una piedra chica. El centro queda libre para
+ * la ficha: el ladrón va al costado, no en este pasillo. Sólo las cumbres llevan nieve.
  */
 export function peakPose(id: string, k: number, per: number) {
   const deg = Math.PI / 180;

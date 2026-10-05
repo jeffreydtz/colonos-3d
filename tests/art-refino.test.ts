@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import { buildBoard } from "../shared/board.ts";
@@ -20,6 +21,9 @@ import {
   TOKEN_R,
   digitScale,
   makeHexPlate,
+  ROBBER_OPACITY,
+  ROBBER_SCALE,
+  robberCoversToken,
   robberSpot,
 } from "../src/three/geo.ts";
 import { hexHeight } from "../src/three/HexDecor.tsx";
@@ -283,22 +287,32 @@ describe("fichas y losetas como las impresas", () => {
     expect(tileTint("d", "desierto", new Set(["d"]), undefined, "d")).toBe(TILE_TINT.highlighted);
   });
 
-  it("el ladrón se para detrás de la ficha, sin pisarla ni salir de su loseta; en el desierto, al centro", () => {
+  it("el ladrón va al costado: no pisa la ficha ni el camino, y el número se lee al girar la cámara", () => {
     const apothem = (S * Math.sqrt(3)) / 2;
+    const settleR = Math.hypot(0.15, 0.12) * PIECE_SCALE;
     for (const [q, r] of [[0, 0], [2, -1], [-1, 2]] as const) {
       const c = hexToPixel(q, r, S);
       const s = robberSpot({ q, r, number: 8 });
-      // Del lado lejano a la cámara: el número bloqueado queda delante del peón.
-      expect(s.y).toBeLessThan(c.y);
-      const d = Math.hypot(s.x - c.x, s.y - c.y);
-      expect(d).toBeGreaterThanOrEqual(TOKEN_R + ROBBER_FOOT_R);
-      // Ni los caminos de las aristas (medio ancho ~0,065) ni un poblado en el vértice de atrás.
-      expect(d + ROBBER_FOOT_R).toBeLessThan(apothem - 0.065);
-      expect(Math.hypot(s.x - c.x, s.y - (c.y - S)) - ROBBER_FOOT_R).toBeGreaterThan(0.15);
       const desert = robberSpot({ q, r, number: null });
-      expect(desert.x).toBeCloseTo(c.x, 9);
-      expect(desert.y).toBeCloseTo(c.y, 9);
+      expect(desert.x).toBeCloseTo(s.x, 9);
+      expect(desert.y).toBeCloseTo(s.y, 9);
+      // Al este del centro, no encima ni detrás de la ficha.
+      expect(s.x - c.x).toBeGreaterThan(TOKEN_R + ROBBER_FOOT_R);
+      expect(Math.abs(s.y - c.y)).toBeLessThan(0.02);
+      const d = Math.hypot(s.x - c.x, s.y - c.y);
+      expect(d + ROBBER_FOOT_R).toBeLessThan(apothem - 0.065);
+      for (let i = 0; i < 6; i++) {
+        const corner = hexCorner(c, S, i);
+        expect(Math.hypot(s.x - corner.x, s.y - corner.y) - ROBBER_FOOT_R).toBeGreaterThan(settleR);
+      }
     }
+    expect(ROBBER_SCALE).toBeLessThan(1);
+    expect(ROBBER_OPACITY).toBeLessThan(0.85);
+    expect(ROBBER_OPACITY).toBeGreaterThan(0.4);
+    for (const el of [44, 40, 36]) expect(robberCoversToken(el)).toBe(false);
+    const mat = readFileSync("src/three/materials.ts", "utf8");
+    expect(mat).toContain("ROBBER_OPACITY");
+    expect(mat).toContain("depthWrite: false");
   });
 
   it("liviano: marco más claro que la mesa y el brillo del barniz sigue al tema", () => {

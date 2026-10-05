@@ -1,12 +1,17 @@
 import { useFrame } from "@react-three/fiber";
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import { useDispose } from "../dispose";
 import * as THREE from "three";
 import { COLOR_HEX } from "@shared/constants";
 import type { ClientView, ColorId } from "@shared/types";
 import { reduceMotion } from "../../audio/sfx";
+import { roadLay } from "../../motion/curves";
+import { DURATION, motionMs } from "../../motion/tokens";
+import { anchorRise, introIds, introPlaying } from "../boardIntro";
 import { useApp } from "../../store";
-import { PIECE_CAPS } from "./Settlements";
 import { S, ROAD_LEN, ROAD_PROFILE, ROAD_Y, mergeSolid } from "../geo";
+import { EDGE_HIT_H, EDGE_HIT_W } from "../hits";
+import { bindInstanceTap } from "../instanceTap";
 import { getMaterials } from "../materials";
 
 const GHOST = "#facc15";
@@ -33,10 +38,12 @@ export function Roads({
   view,
   lite,
   onEdge,
+  selectedId = null,
 }: {
   view: ClientView;
   lite: boolean;
   onEdge: (id: string) => void;
+  selectedId?: string | null;
 }) {
   const mats = getMaterials(lite ? "lite" : "normal");
   const pieceMat = useMemo(() => {
@@ -66,6 +73,9 @@ export function Roads({
     [view.edges, placed, view.legal.edges],
   );
   const geo = useMemo(() => roadGeo(), []);
+  useDispose(geo);
+  useDispose(pieceMat);
+  useDispose(outlineMat);
   const ref = useRef<THREE.InstancedMesh>(null);
   const out = useRef<THREE.InstancedMesh>(null);
   const ghostRef = useRef<THREE.InstancedMesh>(null);
@@ -75,11 +85,15 @@ export function Roads({
   const col = useMemo(() => new THREE.Color(), []);
   const freeze = useApp((s) => s.artFreeze);
   const born = useRef(new Map<string, number>());
+  const painting = useRef(false);
+  const hoverId = useRef<string | null>(null);
+  const hoverMix = useRef(0);
 
   const layout = useCallback(
     (tNow: number) => {
+      const roadMs = freeze ? 0 : motionMs(DURATION.road, { lite, reduce: reduceMotion() });
       for (const road of placed) {
-        if (!born.current.has(road.edgeId)) born.current.set(road.edgeId, freeze ? tNow - PIECE_CAPS.placeMs : tNow);
+        if (!born.current.has(road.edgeId)) born.current.set(road.edgeId, tNow);
       }
       function stamp(mesh: THREE.InstancedMesh | null, scaleY: number) {
         if (!mesh) return;
@@ -94,12 +108,16 @@ export function Roads({
           const bx = b.x * S;
           const bz = b.y * S;
           const t0 = born.current.get(road.edgeId) ?? tNow;
-          const u = freeze ? 1 : Math.min(1, (tNow - t0) / PIECE_CAPS.placeMs);
-          const grow = 0.2 + 0.8 * (1 - (1 - u) * (1 - u));
-          dummy.position.set((ax + bx) / 2, ROAD_Y, (az + bz) / 2);
+          const u = roadMs === 0 ? 1 : Math.min(1, (tNow - t0) / roadMs);
+          const lay = roadLay(u, roadMs === 0);
+          const lift = anchorRise(introIds(view.hexes), view.hexes, [...a.hexIds, ...b.hexIds], tNow, {
+            lite,
+            reduce: reduceMotion(),
+          });
+          dummy.position.set((ax + bx) / 2, ROAD_Y + lay.y + lift, (az + bz) / 2);
           dummy.rotation.set(0, Math.atan2(bx - ax, bz - az), 0);
           const len = Math.hypot(bx - ax, bz - az);
-          dummy.scale.set(grow, scaleY * grow, Math.max(0.45, len * ROAD_LEN) * (0.35 + 0.65 * u));
+          dummy.scale.set(lay.width, scaleY * lay.thick, Math.max(0.45, len * ROAD_LEN) * lay.length);
           dummy.updateMatrix();
           mesh.setMatrixAt(i, dummy.matrix);
           col.set(colorOf.get(road.playerId) ?? "#ccc");
@@ -113,7 +131,7 @@ export function Roads({
       stamp(ref.current, 1);
       stamp(out.current, 1.04);
     },
-    [placed, view.edges, view.vertices, colorOf, dummy, col, freeze],
+    [placed, view.edges, view.vertices, view.hexes, colorOf, dummy, col, freeze, lite],
   );
 
   useLayoutEffect(() => {
@@ -123,7 +141,12 @@ export function Roads({
   useFrame(() => {
     if (freeze) return;
     const tNow = performance.now();
-    if (placed.some((r) => tNow - (born.current.get(r.edgeId) ?? tNow) < PIECE_CAPS.placeMs)) layout(tNow);
+    const roadMs = motionMs(DURATION.road, { lite, reduce: reduceMotion() });
+    const live =
+      (roadMs > 0 && placed.some((r) => tNow - (born.current.get(r.edgeId) ?? tNow) <= roadMs)) ||
+      introPlaying(introIds(view.hexes), view.hexes, tNow, { lite, reduce: reduceMotion() });
+    if (live || painting.current) layout(tNow);
+    painting.current = live;
   });
 
   /**
@@ -131,7 +154,7 @@ export function Roads({
    * late igual. La caja ancha casi invisible es sólo para que el toque sea fácil.
    */
   const layoutGhosts = useCallback(
-    (pulse: number) => {
+    (pulse: number, mix: number) => {
       for (const mesh of [ghostRef.current, ghostBar.current, ghostRim.current]) {
         if (!mesh) continue;
         const hit = mesh === ghostRef.current;
@@ -144,10 +167,13 @@ export function Roads({
           const bx = b.x * S;
           const bz = b.y * S;
           const len = Math.hypot(bx - ax, bz - az);
-          dummy.position.set((ax + bx) / 2, hit ? ROAD_Y : ROAD_Y + 0.016, (az + bz) / 2);
+          const hot = e.id === selectedId;
+          const hovered = !hot && e.id === hoverId.current;
+          const pop = hot ? 1.5 : hovered ? 1 + 0.35 * mix : 1;
+          dummy.position.set((ax + bx) / 2, hit ? ROAD_Y + EDGE_HIT_H / 2 : ROAD_Y + 0.016, (az + bz) / 2);
           dummy.rotation.set(0, Math.atan2(bx - ax, bz - az), 0);
           if (hit) dummy.scale.set(1, 1, Math.max(len * 0.9, 0.72));
-          else dummy.scale.set(pulse, 1, len * ROAD_LEN * 0.92);
+          else dummy.scale.set(pulse * pop, hot ? 1.45 : 1, len * ROAD_LEN * (hot ? 0.98 : hovered ? 0.96 : 0.92));
           dummy.updateMatrix();
           mesh.setMatrixAt(i, dummy.matrix);
         });
@@ -156,15 +182,24 @@ export function Roads({
         mesh.computeBoundingSphere();
       }
     },
-    [ghosts, view.vertices, dummy],
+    [ghosts, view.vertices, dummy, selectedId],
   );
   useLayoutEffect(() => {
-    layoutGhosts(1);
+    layoutGhosts(1, hoverMix.current);
   }, [layoutGhosts]);
   useFrame(({ clock }) => {
-    if (freeze || reduceMotion() || ghosts.length === 0) return;
-    layoutGhosts(1 + Math.sin(clock.elapsedTime * 3.4) * 0.12);
+    if (freeze || ghosts.length === 0) return;
+    const reduce = reduceMotion();
+    const want = hoverId.current ? 1 : 0;
+    const prev = hoverMix.current;
+    hoverMix.current = reduce ? want : prev + (want - prev) * 0.22;
+    if (reduce && Math.abs(hoverMix.current - prev) < 0.001 && want === 0) return;
+    const pulse = reduce ? 1 : 1 + Math.sin(clock.elapsedTime * 2.4) * 0.06;
+    layoutGhosts(pulse, hoverMix.current);
   });
+
+  const hotEdge = selectedId ? ghosts.find((e) => e.id === selectedId) : undefined;
+  const hotFrame = hotEdge ? ghostFrame(hotEdge, view.vertices) : null;
 
   return (
     <group>
@@ -200,27 +235,50 @@ export function Roads({
             ref={ghostRef}
             args={[undefined, undefined, Math.max(1, ghosts.length)]}
             frustumCulled={false}
-            onClick={(ev) => {
+            onPointerDown={bindInstanceTap((idx) => ghosts[idx]?.id, onEdge)}
+            onPointerMove={(ev) => {
               ev.stopPropagation();
               const idx = ev.instanceId;
-              const id = idx != null ? ghosts[idx]?.id : undefined;
-              if (id) onEdge(id);
-            }}
-            onPointerOver={(ev) => {
-              ev.stopPropagation();
+              hoverId.current = idx != null ? (ghosts[idx]?.id ?? null) : null;
               document.body.style.cursor = "pointer";
             }}
             onPointerOut={() => {
+              hoverId.current = null;
               document.body.style.cursor = "default";
             }}
           >
-            <boxGeometry args={[0.3, 0.09, 1]} />
+            <boxGeometry args={[EDGE_HIT_W, EDGE_HIT_H, 1]} />
             <meshBasicMaterial transparent opacity={0} color={GHOST} depthWrite={false} />
           </instancedMesh>
+          {hotFrame && (
+            <mesh position={hotFrame.position} rotation={hotFrame.rotation} scale={hotFrame.scale} raycast={() => {}}>
+              <boxGeometry args={[0.12, 0.05, 1]} />
+              <meshBasicMaterial color="#fff6c8" depthWrite={false} />
+            </mesh>
+          )}
         </>
       )}
     </group>
   );
+}
+
+function ghostFrame(
+  edge: { vertexIds: [string, string] },
+  vertices: ClientView["vertices"],
+): { position: [number, number, number]; rotation: [number, number, number]; scale: [number, number, number] } | null {
+  const a = vertices.find((v) => v.id === edge.vertexIds[0]);
+  const b = vertices.find((v) => v.id === edge.vertexIds[1]);
+  if (!a || !b) return null;
+  const ax = a.x * S;
+  const az = a.y * S;
+  const bx = b.x * S;
+  const bz = b.y * S;
+  const len = Math.hypot(bx - ax, bz - az);
+  return {
+    position: [(ax + bx) / 2, ROAD_Y + 0.03, (az + bz) / 2],
+    rotation: [0, Math.atan2(bx - ax, bz - az), 0],
+    scale: [1, 1, Math.max(len * ROAD_LEN * 0.98, 0.72)],
+  };
 }
 
 export const ROAD_CAP = MAX_ROAD;

@@ -79,5 +79,8 @@ describe("construir: costos y qué alcanza", () => {
       kind: "wait",
       note: "Primero tirá",
     });
+    const pause = afterSetup({ lana: 1, trigo: 1, mineral: 1 }, "construccion_especial");
+    pause.specialBuildQueue = [pause.players[0]!.id];
+    expect(devOption(viewFor(pause)).state).toEqual({ kind: "wait", note: "En la pausa no" });
   });
 });

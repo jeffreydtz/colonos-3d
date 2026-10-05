@@ -13,6 +13,7 @@ export const TILE_TINT = {
   base: "#ffffff",
   producing: "#fff4d4",
   highlighted: "#f4e4c1",
+  chosen: "#fff6d0",
   robbed: "#8f8a84",
 } as const;
 
@@ -22,7 +23,9 @@ export function tileTint(
   highlighted: Set<string>,
   producing: Set<string> | undefined,
   robberHexId?: string,
+  chosenId?: string,
 ): string {
+  if (chosenId && id === chosenId) return TILE_TINT.chosen;
   if (highlighted.has(id)) return TILE_TINT.highlighted;
   // El oscurecido avisa "esta loseta dejó de producir"; el desierto nunca produce y arranca con el
   // ladrón: oscurecida, la arena se leía como una tabla de madera.

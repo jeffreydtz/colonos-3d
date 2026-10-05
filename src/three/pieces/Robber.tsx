@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useRef } from "react";
+import { useDispose } from "../dispose";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ClientView } from "@shared/types";
-import { ROBBER_SCALE, TILE_TOP, robberSpot } from "../geo";
+import { reduceMotion } from "../../audio/sfx";
+import { robberPose } from "../../motion/curves";
+import { DURATION } from "../../motion/tokens";
+import { introIds, riseY } from "../boardIntro";
+import { ROBBER_H, ROBBER_SCALE, TILE_TOP, robberSpot } from "../geo";
 import { getMaterials } from "../materials";
 
-export const ROBBER_JUMP_MS = 550;
-const ROBBER_H = 0.5;
+/** Duración completa del arco. En liviano el salto usa `DURATION.robberLite`. */
+export const ROBBER_JUMP_MS = DURATION.robber;
 
 /** Peón torneado del ladrón: base, faldón, cuello y cabeza en una sola pieza. */
 function robberGeo(): THREE.LatheGeometry {
@@ -52,6 +57,7 @@ export function Robber({
   const jumping = useRef(false);
   const primed = useRef(false);
   const geo = useMemo(() => robberGeo(), []);
+  useDispose(geo);
   const mat = getMaterials(lite ? "lite" : "normal").robber;
   mat.name = "mat.robber";
 
@@ -75,19 +81,30 @@ export function Robber({
     from.current.copy(ref.current?.position ?? next);
     to.current.copy(next);
     t0.current = performance.now();
-    jumping.current = from.current.distanceTo(next) > 0.08;
+    jumping.current = !reduceMotion() && from.current.distanceTo(next) > 0.08;
+    if (!jumping.current && ref.current) ref.current.position.copy(next);
   }, [robberHexId, hexes, freeze]);
 
   useFrame(() => {
     if (!ref.current) return;
-    if (!jumping.current || freeze) {
-      ref.current.position.lerp(to.current, freeze ? 1 : 0.2);
+    const ms = reduceMotion() ? 0 : lite ? DURATION.robberLite : ROBBER_JUMP_MS;
+    if (!jumping.current || freeze || ms === 0) {
+      const hex = hexes.find((h) => h.id === robberHexId);
+      const lift = hex ? riseY(introIds(hexes), hex.q, hex.r, performance.now(), { lite, reduce: reduceMotion() }) : 0;
+      ref.current.position.set(to.current.x, to.current.y + lift, to.current.z);
       return;
     }
-    const u = Math.min(1, (performance.now() - t0.current) / ROBBER_JUMP_MS);
-    const yArc = Math.sin(u * Math.PI) * 0.85;
-    ref.current.position.lerpVectors(from.current, to.current, u);
-    ref.current.position.y = THREE.MathUtils.lerp(from.current.y, to.current.y, u) + yArc;
+    const now = performance.now();
+    const u = Math.min(1, (now - t0.current) / ms);
+    const p = robberPose(
+      u,
+      { x: from.current.x, y: from.current.y, z: from.current.z },
+      { x: to.current.x, y: to.current.y, z: to.current.z },
+      { lite },
+    );
+    const hex = hexes.find((h) => h.id === robberHexId);
+    const lift = hex ? riseY(introIds(hexes), hex.q, hex.r, now, { lite, reduce: reduceMotion() }) : 0;
+    ref.current.position.set(p.x, p.y + lift, p.z);
     if (u >= 1) jumping.current = false;
   });
 

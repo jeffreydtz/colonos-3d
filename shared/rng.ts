@@ -31,7 +31,10 @@ export function pickInt(rng: () => number, min: number, max: number): number {
   return min + Math.floor(rng() * (max - min + 1));
 }
 
-/** Entero uniforme con crypto; independiente del mazo. */
+/**
+ * Entero uniforme con Web Crypto. El servidor, para los dados, usa `crypto.randomInt`
+ * en `server/fairDice.ts` (mismo CSPRNG, API de Node).
+ */
 export function cryptoInt(min: number, max: number): number {
   const span = max - min + 1;
   if (span <= 0) return min;

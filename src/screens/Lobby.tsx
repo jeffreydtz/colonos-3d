@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { COLOR_HEX, COLOR_LABEL } from "@shared/constants";
+import { gameViewPatch } from "../play/kickoff";
 import { addBotSala, exitMesa, joinSala, loadSession, removeBotSala, setSeatsSala, startSala } from "../socket";
 import { useApp } from "../store";
 
@@ -176,6 +177,7 @@ export function Lobby() {
       {isHost ? (
         <button
           className="mt-4 rounded-xl bg-amber-200 py-3 font-semibold text-stone-900 disabled:bg-stone-600"
+          data-testid="start-game"
           disabled={n < 3}
           onClick={() => {
             void (async () => {
@@ -192,7 +194,11 @@ export function Lobby() {
                   if (joined.ok) r = await startSala();
                 }
               }
-              if (!r.ok) set({ error: r.error ?? "No se pudo empezar." });
+              if (!r.ok) {
+                set({ error: r.error ?? "No se pudo empezar." });
+                return;
+              }
+              if (r.view) set({ ...gameViewPatch(r.view, useApp.getState()), error: null });
             })();
           }}
         >
@@ -217,6 +223,8 @@ export function Lobby() {
               screen: "home",
               lobby: null,
               view: null,
+              kickoff: null,
+              kickoffKey: null,
               token: null,
               playerId: null,
               code: "",

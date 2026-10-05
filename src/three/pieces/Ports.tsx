@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
+import { reuseVec2, useDispose } from "../dispose";
 import * as THREE from "three";
 import { RESOURCES, type ClientView, type Resource } from "@shared/types";
 import { paintAnchor, paintResource } from "../../ui/icons/GameIcon";
@@ -98,6 +99,8 @@ export function Ports({ vertices, lite }: { vertices: ClientView["vertices"]; li
     };
     return m;
   }, [lite, map]);
+  useDispose(faceGeo);
+  useDispose(faceMat);
 
   useLayoutEffect(() => {
     const body = bodyRef.current;
@@ -154,7 +157,7 @@ export function Ports({ vertices, lite }: { vertices: ClientView["vertices"]; li
       posts.instanceMatrix.needsUpdate = true;
       posts.computeBoundingSphere();
     }
-    face.geometry.setAttribute("aCell", new THREE.InstancedBufferAttribute(cells, 2));
+    reuseVec2(face.geometry, "aCell", cells, MAX_PORT * 2);
   }, [pairs, dummy, lite]);
 
   if (pairs.length === 0) return null;

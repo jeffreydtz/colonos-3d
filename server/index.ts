@@ -69,6 +69,7 @@ if (!process.env.VITEST) {
 }
 
 const app = express();
+app.disable("x-powered-by");
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json({ limit: MAX_JSON_BYTES }));
 
@@ -254,7 +255,9 @@ io.on("connection", (socket) => {
       const bound = seatForSocket(socket, payload);
       if (!bound) return ack({ ok: false, error: "No estás en una sala." });
       const result = startGame(bound.room, bound.seat.id);
-      ack(result);
+      if (!result.ok) return ack(result);
+      const view = gameView(bound.room, bound.seat.id);
+      ack({ ...result, view });
       emitRoom(bound.room.code);
     }),
   );

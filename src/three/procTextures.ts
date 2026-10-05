@@ -405,6 +405,13 @@ export function woodTexture(repeatX: number, repeatY = repeatX, anisotropy = 8):
   return t;
 }
 
+/** Suelta un clon de `woodTexture`. No toca la textura base. */
+export function releaseWood(tex: THREE.Texture | null | undefined): void {
+  if (!tex) return;
+  wood?.pending.delete(tex);
+  tex.dispose();
+}
+
 export const BUMP_SCALE: Record<Terrain, number> = {
   madera: 0.12,
   ladrillo: 0.18,

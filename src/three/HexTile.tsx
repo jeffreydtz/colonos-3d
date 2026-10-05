@@ -1,10 +1,15 @@
+import { useFrame } from "@react-three/fiber";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { hexToPixel } from "@shared/hex";
 import type { ClientView, Terrain } from "@shared/types";
 import { BUMP_SCALE, SIDE_COLOR, terrainAlbedo, terrainBump, terrainRough } from "./procTextures";
+import { reduceMotion } from "../audio/sfx";
+import { introPlaying, riseY } from "./boardIntro";
 import { hexHeight } from "./HexDecor";
 import { S as SIZE, TILE_BOTTOM, TILE_TOP } from "./geo";
+import { bindInstanceTap, bindMeshTap } from "./instanceTap";
+import { VERTEX_HIT_LIFT, VERTEX_HIT_R } from "./hits";
 import { prismGeo, tileSpin, tileTint } from "./tiles";
 
 export function HexTile({
@@ -33,10 +38,7 @@ export function HexTile({
         position={[0, height / 2, 0]}
         castShadow
         receiveShadow
-        onClick={(e) => {
-          e.stopPropagation();
-          onClick();
-        }}
+        onPointerDown={bindMeshTap(onClick)}
         onPointerOver={(e) => {
           e.stopPropagation();
           document.body.style.cursor = highlighted ? "pointer" : "grab";
@@ -106,12 +108,16 @@ export function LiteHexField({
   producing,
   onHex,
   robberHexId,
+  chosenId,
+  introId,
 }: {
   hexes: ClientView["hexes"];
   highlighted: Set<string>;
   producing?: Set<string>;
   onHex: (id: string) => void;
   robberHexId?: string;
+  chosenId?: string;
+  introId: string;
 }) {
   const groups = useMemo(() => {
     const m = new Map<Terrain, ClientView["hexes"]>();
@@ -132,7 +138,10 @@ export function LiteHexField({
           highlighted={highlighted}
           producing={producing}
           robberHexId={robberHexId}
+          chosenId={chosenId}
           onHex={onHex}
+          introId={introId}
+          board={hexes}
         />
       ))}
     </>
@@ -145,14 +154,20 @@ function LiteTerrainGroup({
   highlighted,
   producing,
   robberHexId,
+  chosenId,
   onHex,
+  introId,
+  board,
 }: {
   terrain: Terrain;
   items: ClientView["hexes"];
   highlighted: Set<string>;
   producing?: Set<string>;
   robberHexId?: string;
+  chosenId?: string;
   onHex: (id: string) => void;
+  introId: string;
+  board: ClientView["hexes"];
 }) {
   const height = TILE_TOP - TILE_BOTTOM;
   const geo = prismGeo(height);
@@ -161,34 +176,41 @@ function LiteTerrainGroup({
   const ref = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const color = useMemo(() => new THREE.Color(), []);
-  useLayoutEffect(() => {
+  const done = useRef(false);
+  const paint = (now: number) => {
     const mesh = ref.current;
     if (!mesh) return;
+    const opts = { lite: true, reduce: reduceMotion() };
     items.forEach((h, i) => {
       const p = hexToPixel(h.q, h.r, SIZE);
-      dummy.position.set(p.x, TILE_BOTTOM + height / 2, p.y);
+      dummy.position.set(p.x, TILE_BOTTOM + height / 2 + riseY(introId, h.q, h.r, now, opts), p.y);
       dummy.rotation.set(0, tileSpin(h.id, h.terrain), 0);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
-      color.set(tileTint(h.id, h.terrain, highlighted, producing, robberHexId));
+      color.set(tileTint(h.id, h.terrain, highlighted, producing, robberHexId, chosenId));
       mesh.setColorAt(i, color);
     });
     mesh.count = items.length;
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.computeBoundingSphere();
-  }, [items, highlighted, producing, robberHexId, dummy, color, height]);
+  };
+  useLayoutEffect(() => {
+    done.current = false;
+    paint(performance.now());
+  }, [items, highlighted, producing, robberHexId, chosenId, dummy, color, height, introId, board]);
+  useFrame(() => {
+    if (done.current) return;
+    const now = performance.now();
+    const live = introPlaying(introId, board, now, { lite: true, reduce: reduceMotion() });
+    paint(now);
+    if (!live) done.current = true;
+  });
   return (
     <instancedMesh
       ref={ref}
       args={[geo, undefined, Math.max(1, items.length)]}
-      onClick={(e) => {
-        e.stopPropagation();
-        const idx = e.instanceId;
-        if (idx == null) return;
-        const hex = items[idx];
-        if (hex) onHex(hex.id);
-      }}
+      onPointerDown={bindInstanceTap((idx) => items[idx]?.id, onHex)}
       onPointerOver={(e) => {
         e.stopPropagation();
         const idx = e.instanceId;
@@ -231,8 +253,9 @@ export function LiteMarks({
     for (const mesh of [ring.current, hit.current]) {
       if (!mesh) continue;
       spots.forEach((s, i) => {
-        dummy.position.set(s.x * SIZE, 0.36, s.y * SIZE);
-        dummy.rotation.set(-Math.PI / 2, 0, 0);
+        const isHit = mesh === hit.current;
+        dummy.position.set(s.x * SIZE, isHit ? TILE_TOP + VERTEX_HIT_LIFT : 0.36, s.y * SIZE);
+        dummy.rotation.set(isHit ? 0 : -Math.PI / 2, 0, 0);
         dummy.updateMatrix();
         mesh.setMatrixAt(i, dummy.matrix);
       });
@@ -251,15 +274,10 @@ export function LiteMarks({
       <instancedMesh
         ref={hit}
         args={[undefined, undefined, Math.max(1, spots.length)]}
-        onClick={(e) => {
-          e.stopPropagation();
-          const idx = e.instanceId;
-          const id = idx != null ? spots[idx]?.id : undefined;
-          if (id) onPick(id);
-        }}
+        onPointerDown={bindInstanceTap((idx) => spots[idx]?.id, onPick)}
       >
-        <circleGeometry args={[0.48, 10]} />
-        <meshBasicMaterial transparent opacity={0.14} color={accent} />
+        <sphereGeometry args={[VERTEX_HIT_R, 12, 8]} />
+        <meshBasicMaterial transparent opacity={0} color={accent} depthWrite={false} />
       </instancedMesh>
     </group>
   );

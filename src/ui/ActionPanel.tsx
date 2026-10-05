@@ -1,12 +1,15 @@
-import { useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import { RESOURCE_LABEL } from "@shared/constants";
 import { RESOURCES } from "@shared/types";
 import type { ClientView, DevKind, Resource, TradeOffer } from "@shared/types";
 import { offersForYou } from "../play/actionTabs";
 import { buildOptions, devOption, missingFor, type BuildState } from "../play/buildOptions";
+import { previewOrRun } from "../play/commitAction";
+import { same } from "../play/confirm";
 import { sendAction } from "../socket";
 import { useApp, type ActionTab } from "../store";
 import { CloseButton } from "./CloseButton";
+import { RivalHands } from "./PublicHand";
 import {
   BagIcons,
   DEV_LABEL,
@@ -118,7 +121,7 @@ export function ActionPanel({
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
       >
         {tab === "construir" ? (
-          <BuildTab view={view} compact={compact} act={act} />
+          <BuildTab view={view} compact={compact} />
         ) : tab === "banco" ? (
           <BankTrade view={view} />
         ) : (
@@ -137,7 +140,7 @@ export function ActionPanel({
               testId="panel-end-turn"
               tone="emerald"
               disabled={!legal.canEndTurn}
-              onClick={() => void act(() => sendAction({ type: "end_turn" }))}
+              onClick={() => void previewOrRun({ kind: "end_turn" })}
             >
               Pasar turno
             </Btn>
@@ -148,11 +151,15 @@ export function ActionPanel({
   );
 }
 
-function BuildTab({ view, compact, act }: { view: ClientView; compact?: boolean; act: Act }) {
+function BuildTab({ view, compact }: { view: ClientView; compact?: boolean }) {
   const set = useApp((s) => s.set);
+  const confirmOn = useApp((s) => s.confirmActions);
+  const pending = useApp((s) => s.pending);
   const legal = view.legal;
   const [invento, setInvento] = useState(false);
   const [mono, setMono] = useState(false);
+  if (invento && !legal.canPlayYearPlenty) setInvento(false);
+  if (mono && !legal.canPlayMonopoly) setMono(false);
   const held = new Set(view.hand.devCards.map((c) => c.kind));
   // En el celu la hoja tapa el tablero: lo que sigue se toca ahí, así que se cierra.
   const toBoard = compact ? { sheet: null } : {};
@@ -166,8 +173,12 @@ function BuildTab({ view, compact, act }: { view: ClientView; compact?: boolean;
       <div className="mb-2 space-y-1" data-testid="build-list">
         <p className="text-[11px] text-amber-100/70">
           {view.phase === "colocacion_poblado" || view.phase === "colocacion_camino"
-            ? "La primera colocación es gratis: tocá el lugar marcado en el tablero."
-            : "Se construye tocando el lugar marcado en el tablero."}
+            ? confirmOn
+              ? "La colocación es gratis. El primer toque marca el lugar; el segundo lo pone."
+              : "La primera colocación es gratis: tocá el lugar marcado en el tablero."
+            : confirmOn
+              ? "El primer toque marca el lugar y muestra el costo. El segundo, o Confirmar, lo construye."
+              : "Se construye tocando el lugar marcado en el tablero."}
         </p>
         {buildOptions(view).map((o) => (
           <CostRow
@@ -187,15 +198,9 @@ function BuildTab({ view, compact, act }: { view: ClientView; compact?: boolean;
           cost={dev.cost}
           state={dev.state}
           hand={view.hand.resources}
-          readyText="Comprar"
+          readyText={pending?.kind === "buy_dev" ? "Confirmar" : "Comprar"}
           testId="buy-dev"
-          onClick={() =>
-            void act(async () => {
-              const r = await sendAction({ type: "buy_dev" });
-              if (r.ok && r.reveal) set({ revealCard: r.reveal });
-              return r;
-            })
-          }
+          onClick={() => void previewOrRun({ kind: "buy_dev" })}
         />
       </div>
       {/* Sólo las cartas que tenés en la mano: cuatro botones grises son ruido casi toda la partida. */}
@@ -218,11 +223,11 @@ function BuildTab({ view, compact, act }: { view: ClientView; compact?: boolean;
             <PlayDev
               kind="progreso_caminos"
               disabled={!legal.canPlayRoadBuilding}
-              onClick={() =>
-                void act(() => sendAction({ type: "play_road_building" })).then((ok) => {
-                  if (ok) set({ hint: "Tocá dónde van los caminos gratis.", ...toBoard });
-                })
-              }
+              onClick={() => {
+                void previewOrRun({ kind: "play_roads" }).then((r) => {
+                  if (r?.ok) set({ ...toBoard });
+                });
+              }}
             />
           )}
         </div>
@@ -378,9 +383,14 @@ function DevHeld({ view }: { view: ClientView }) {
 }
 
 function InventoBox({ view, onClose }: { view: ClientView; onClose: () => void }) {
-  const set = useApp((s) => s.set);
   const [a, setA] = useState<Resource>("trigo");
   const [b, setB] = useState<Resource>("mineral");
+  useEffect(() => {
+    const p = useApp.getState().pending;
+    if (p?.kind === "year" && !same(p, { kind: "year", resources: [a, b] })) {
+      useApp.getState().set({ pending: null });
+    }
+  }, [a, b]);
   return (
     <div className="mt-3 space-y-2 rounded-xl bg-black/30 p-2 text-sm">
       <p>Elegí dos recursos del banco.</p>
@@ -406,16 +416,23 @@ function InventoBox({ view, onClose }: { view: ClientView; onClose: () => void }
       <div className="flex gap-2">
         <button
           className="min-h-10 flex-1 rounded-lg bg-emerald-700 py-1 font-semibold"
+          data-testid="year-take"
           onClick={() => {
-            void sendAction({ type: "play_year_plenty", resources: [a, b] }).then((r) => {
-              if (!r.ok) set({ toast: r.error ?? null });
-              else onClose();
+            void previewOrRun({ kind: "year", resources: [a, b] }).then((r) => {
+              if (r?.ok) onClose();
             });
           }}
         >
           Tomar
         </button>
-        <button className="min-h-10 rounded-lg bg-stone-700 px-3" onClick={onClose}>
+        <button
+          className="min-h-10 rounded-lg bg-stone-700 px-3"
+          onClick={() => {
+            const p = useApp.getState().pending;
+            if (p?.kind === "year") useApp.getState().set({ pending: null });
+            onClose();
+          }}
+        >
           Cancelar
         </button>
       </div>
@@ -424,7 +441,6 @@ function InventoBox({ view, onClose }: { view: ClientView; onClose: () => void }
 }
 
 function MonoBox({ onClose }: { onClose: () => void }) {
-  const set = useApp((s) => s.set);
   return (
     <div className="mt-3 space-y-2 rounded-xl bg-black/30 p-2 text-sm">
       <p>¿Qué recurso monopolizás?</p>
@@ -435,15 +451,21 @@ function MonoBox({ onClose }: { onClose: () => void }) {
             resource={r}
             size={28}
             onClick={() => {
-              void sendAction({ type: "play_monopoly", resource: r }).then((res) => {
-                if (!res.ok) set({ toast: res.error ?? null });
-                else onClose();
+              void previewOrRun({ kind: "mono", resource: r }).then((res) => {
+                if (res?.ok) onClose();
               });
             }}
           />
         ))}
       </div>
-      <button className="min-h-10 rounded-lg bg-stone-700 px-3" onClick={onClose}>
+      <button
+        className="min-h-10 rounded-lg bg-stone-700 px-3"
+        onClick={() => {
+          const p = useApp.getState().pending;
+          if (p?.kind === "mono") useApp.getState().set({ pending: null });
+          onClose();
+        }}
+      >
         Cancelar
       </button>
     </div>
@@ -451,7 +473,6 @@ function MonoBox({ onClose }: { onClose: () => void }) {
 }
 
 function TradeCard({ view, trade }: { view: ClientView; trade: TradeOffer }) {
-  const set = useApp((s) => s.set);
   const name = (id: string) => view.players.find((p) => p.id === id)?.name ?? "Alguien";
   const mine = trade.fromId === view.youId;
   const forMe = trade.toId === "todos" || trade.toId === view.youId;
@@ -472,11 +493,7 @@ function TradeCard({ view, trade }: { view: ClientView; trade: TradeOffer }) {
         {forMe && !mine && (
           <button
             className="min-h-9 rounded-lg bg-emerald-700 px-3 font-semibold"
-            onClick={() =>
-              void sendAction({ type: "accept_trade", tradeId: trade.id }).then((r) => {
-                if (!r.ok) set({ toast: r.error ?? null });
-              })
-            }
+            onClick={() => void previewOrRun({ kind: "accept", tradeId: trade.id })}
           >
             Aceptar
           </button>
@@ -484,9 +501,10 @@ function TradeCard({ view, trade }: { view: ClientView; trade: TradeOffer }) {
         {(forMe || mine) && (
           <button
             className="min-h-9 rounded-lg bg-black/40 px-3 text-amber-100/85"
+            aria-label={mine ? "Cancelar oferta" : trade.toId === "todos" ? "Pasar de la oferta" : "Rechazar oferta"}
             onClick={() => void sendAction({ type: "reject_trade", tradeId: trade.id })}
           >
-            {mine ? "Cancelar" : "Rechazar"}
+            {mine ? "Cancelar" : trade.toId === "todos" ? "Paso" : "Rechazar"}
           </button>
         )}
       </div>
@@ -559,7 +577,6 @@ function closedNote(view: ClientView, what: "banco" | "jugadores"): string {
 }
 
 function BankTrade({ view }: { view: ClientView }) {
-  const set = useApp((s) => s.set);
   const rateOf = (r: Resource) => settlementPortRate(view, view.youId, r);
   // Arranca en lo que sí podés cambiar (lo que más tenés a tu tasa), no en madera con 0 en la mano.
   const [giveR, setGiveR] = useState<Resource>(() => {
@@ -574,11 +591,13 @@ function BankTrade({ view }: { view: ClientView }) {
   const rate = rateOf(giveR);
   const bankOk = open && view.hand.resources[giveR] >= rate && giveR !== wantR && view.bankHas?.[wantR] !== false;
   const anyGive = RESOURCES.some((r) => view.hand.resources[r] >= rateOf(r));
-
-  async function submit() {
-    const r = await sendAction({ type: "bank_trade", give: { [giveR]: rate }, want: { [wantR]: 1 } });
-    if (!r.ok) set({ toast: r.error ?? null });
-  }
+  useEffect(() => {
+    const p = useApp.getState().pending;
+    if (p?.kind !== "bank") return;
+    if (!same(p, { kind: "bank", give: { [giveR]: rate }, want: { [wantR]: 1 }, rate })) {
+      useApp.getState().set({ pending: null });
+    }
+  }, [giveR, wantR, rate]);
 
   return (
     <div className="space-y-2 text-sm" data-testid="trade-bank">
@@ -632,7 +651,7 @@ function BankTrade({ view }: { view: ClientView }) {
           className="min-h-10 flex-1 rounded-lg bg-emerald-700 py-1 font-semibold disabled:bg-stone-700 disabled:text-stone-400"
           data-testid="bank-submit"
           disabled={!bankOk}
-          onClick={() => void submit()}
+          onClick={() => void previewOrRun({ kind: "bank", give: { [giveR]: rate }, want: { [wantR]: 1 }, rate })}
         >
           Cambiar
         </button>
@@ -642,25 +661,30 @@ function BankTrade({ view }: { view: ClientView }) {
 }
 
 function PlayerTrade({ view }: { view: ClientView }) {
-  const set = useApp((s) => s.set);
+  const offerEpoch = useApp((s) => s.offerEpoch);
   const [give, setGive] = useState<Bag>({});
   const [want, setWant] = useState<Bag>({});
   const [toId, setToId] = useState("todos");
   const canOffer = view.legal.canTrade;
   const overlap = RESOURCES.some((r) => (give[r] ?? 0) > 0 && (want[r] ?? 0) > 0);
   const offerOk = canOffer && bagTotal(give) > 0 && bagTotal(want) > 0 && !overlap;
-
-  async function submitOffer() {
-    const r = await sendAction({ type: "offer_trade", toId: toId === "todos" ? "todos" : toId, give, want });
-    if (!r.ok) set({ toast: r.error ?? null });
-    else {
-      setGive({});
-      setWant({});
-    }
+  const target = toId === "todos" ? "todos" : toId;
+  const [seenEpoch, setSeenEpoch] = useState(offerEpoch);
+  if (seenEpoch !== offerEpoch) {
+    setSeenEpoch(offerEpoch);
+    setGive({});
+    setWant({});
   }
+  useEffect(() => {
+    const p = useApp.getState().pending;
+    if (p?.kind === "offer" && !same(p, { kind: "offer", toId: target, give, want })) {
+      useApp.getState().set({ pending: null });
+    }
+  }, [give, want, target]);
 
   return (
     <div className="space-y-2 text-sm" data-testid="trade-players">
+      <RivalHands view={view} />
       {canOffer ? (
         <>
           <p className="text-[11px] font-semibold text-amber-100/80">Das</p>
@@ -706,7 +730,7 @@ function PlayerTrade({ view }: { view: ClientView }) {
               className="min-h-10 shrink-0 rounded-lg bg-emerald-700 px-4 font-semibold disabled:bg-stone-700 disabled:text-stone-400"
               data-testid="offer-submit"
               disabled={!offerOk}
-              onClick={() => void submitOffer()}
+              onClick={() => void previewOrRun({ kind: "offer", toId: target, give, want })}
             >
               Ofrecer
             </button>

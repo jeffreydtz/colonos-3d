@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
+import { useDispose } from "./dispose";
 import * as THREE from "three";
 import type { ClientView, Terrain } from "@shared/types";
 import { hexToPixel } from "@shared/hex";
@@ -212,6 +213,8 @@ export function HexDecor({
   const layoutRocks = useMemo(() => layoutPeaks(false), [layoutPeaks]);
   const summitGeo = useMemo(() => cragGeo(true), []);
   const rockGeo = useMemo(() => cragGeo(false), []);
+  useDispose(summitGeo);
+  useDispose(rockGeo);
 
   const trees = useInstances(treeN, woods, layoutTrees, clear);
   const caps = useInstances(capN, woods, layoutCaps, clear);

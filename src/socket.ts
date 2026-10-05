@@ -67,7 +67,7 @@ export function joinSala(opts: {
   });
 }
 
-export function startSala(): Promise<{ ok: boolean; error?: string }> {
+export function startSala(): Promise<{ ok: boolean; error?: string; view?: ClientView | null }> {
   return new Promise((resolve) => socket.emit("start", sessionAck(), resolve));
 }
 

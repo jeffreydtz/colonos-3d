@@ -1,6 +1,8 @@
 import { useEffect, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
+import { reduceMotion } from "../../audio/sfx";
+import { SEA_DRIFT } from "../../motion/tokens";
 import { SEA_Y, ensureCcw, offsetLoop } from "../geo";
 import type { BoardLayout } from "../layout";
 import { waterBump } from "../procTextures";
@@ -121,11 +123,12 @@ export function Sea({ layout, lite, theme }: { layout: BoardLayout; lite: boolea
   }, [lite]);
   useEffect(() => () => painted.tex.dispose(), [painted]);
   useEffect(() => () => geo.dispose(), [geo]);
+  useEffect(() => () => bump?.dispose(), [bump]);
 
   useFrame((_, dt) => {
-    if (!bump) return;
-    bump.offset.x += dt * 0.01;
-    bump.offset.y += dt * 0.006;
+    if (!bump || reduceMotion()) return;
+    bump.offset.x += dt * SEA_DRIFT.x;
+    bump.offset.y += dt * SEA_DRIFT.y;
   });
 
   return (

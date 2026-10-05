@@ -159,20 +159,19 @@ describe("corte de red propio y ajeno", () => {
   });
 });
 
-describe("sobre cerrado espectador", () => {
-  it("el dorso se cierra solo entre 3 y 4 s y no revela el tipo", () => {
+describe("carta de desarrollo privada", () => {
+  it("el frente no se muestra a la mesa y el comprador no deja el reloj colgado", () => {
     const src = readFileSync("src/three/CardReveal.tsx", "utf8");
-    const hold = src.match(/SPECTATOR_HOLD_MS = (\d+)/);
-    expect(hold).toBeTruthy();
-    expect(Number(hold![1])).toBeGreaterThanOrEqual(3000);
-    expect(Number(hold![1])).toBeLessThanOrEqual(4000);
-    expect(src).toContain("Sobre cerrado");
+    expect(src).not.toContain("Sobre cerrado");
+    expect(src).not.toContain("unbox-spectator");
     expect(src).toContain("{owner && spec && (");
+    expect(src).toContain("if (!owner) return null");
     expect(src).not.toMatch(/clearTimeout\(t\);\s*void setBusy\(false\)/);
     expect(src).toContain("if (owner) void setBusy(false)");
     const game = readFileSync("src/screens/Game.tsx", "utf8");
-    expect(game).toContain("kind={null}");
-    expect(game).toContain("owner={false}");
+    expect(game).not.toContain("kind={null}");
+    expect(game).not.toContain("owner={false}");
+    expect(game).toContain("devRevealForYou");
   });
 });
 

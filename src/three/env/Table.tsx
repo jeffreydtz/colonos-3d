@@ -1,11 +1,12 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import type { ThemeId } from "../../theme/tokens";
-import { woodTexture } from "../procTextures";
+import { releaseWood, woodTexture } from "../procTextures";
 import { liteWood } from "./liteWood";
 
 /** Mesa de nogal sola: el tablero es lo único que tiene color fuerte en la escena. */
 export function Table({ lite, isla, theme }: { lite: boolean; isla: boolean; theme: ThemeId }) {
   const wood = useMemo(() => (isla ? null : woodTexture(7, 4.4, lite ? 2 : 8)), [lite, isla]);
+  useEffect(() => () => releaseWood(wood), [wood]);
   const liteLook = useMemo(() => liteWood("table", theme), [theme]);
   if (isla) {
     return (

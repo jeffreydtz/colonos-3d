@@ -27,20 +27,75 @@ export function digitScale(n: number): number {
   return (0.84 + pips(n) * 0.04) * (n >= 10 ? 0.86 : 1);
 }
 
-/** Peón del ladrón a ~0,65 de alto: como el físico, le saca dos cabezas a un poblado. */
-export const ROBBER_SCALE = 1.3;
-/** Radio del pie ya escalado (el torneado mide 0,152 en la base). */
+/**
+ * Peón más bajo que un poblado y corrido al costado: a 0,65 tapaba la ficha desde la cámara
+ * de la mesa. El radio sin escalar del torneado es 0,152.
+ */
+export const ROBBER_SCALE = 0.8;
 export const ROBBER_FOOT_R = 0.152 * ROBBER_SCALE;
+/** Alto del torneado sin escalar. Con la escala, queda al costado sin cruzar la ficha. */
+export const ROBBER_H = 0.5;
+/**
+ * Semitransparente: en un ángulo rasante el peón puede cruzar la ficha, y el número
+ * y el terreno se siguen leyendo a través.
+ */
+export const ROBBER_OPACITY = 0.7;
+/** Aire entre el pie y la arista, para no pisar el camino. */
+const ROBBER_EDGE_GAP = 0.075;
 
 /**
- * Dónde se para el ladrón. Con ficha, detrás de ella (del lado lejano a la cámara): el número
- * bloqueado se sigue leyendo y el peón apoya en la loseta, no encaramado en la ficha. En el
- * desierto, al centro.
+ * Costado este de la loseta, lejos del centro. El mismo lugar con ficha o en el desierto:
+ * el número y el terreno quedan libres aunque se dé vuelta la cámara.
  */
 export function robberSpot(hex: { q: number; r: number; number?: number | null }): THREE.Vector2 {
   const p = hexToPixel(hex.q, hex.r, S);
-  if (hex.number == null) return new THREE.Vector2(p.x, p.y);
-  return new THREE.Vector2(p.x, p.y - (TOKEN_R + ROBBER_FOOT_R + 0.035));
+  const apothem = (S * Math.sqrt(3)) / 2;
+  const d = apothem - ROBBER_EDGE_GAP - ROBBER_FOOT_R;
+  return new THREE.Vector2(p.x + d, p.y);
+}
+
+/**
+ * ¿El cilindro del peón cruza algún rayo de la cámara hacia la ficha?
+ * Elevación en grados sobre el horizonte. Sirve para fijar escala y costado.
+ */
+export function robberCoversToken(elevationDeg: number): boolean {
+  const spot = robberSpot({ q: 0, r: 0, number: 8 });
+  const center = hexToPixel(0, 0, S);
+  const cx = spot.x - center.x;
+  const cz = spot.y - center.y;
+  const rf = ROBBER_FOOT_R;
+  const h = ROBBER_H * ROBBER_SCALE;
+  const tokenY = TILE_TOP + TOKEN_H;
+  const el = (elevationDeg * Math.PI) / 180;
+  const rings = [0, TOKEN_R * 0.55, TOKEN_R];
+  for (let ai = 0; ai < 36; ai++) {
+    const az = (ai / 36) * Math.PI * 2;
+    const ux = Math.sin(az) * Math.cos(el);
+    const uy = Math.sin(el);
+    const uz = Math.cos(az) * Math.cos(el);
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2;
+      for (const rad of rings) {
+        const px = Math.cos(a) * rad;
+        const pz = Math.sin(a) * rad;
+        const ox = px - cx;
+        const oz = pz - cz;
+        const A = ux * ux + uz * uz;
+        const B = 2 * (ox * ux + oz * uz);
+        const C = ox * ox + oz * oz - rf * rf;
+        if (A < 1e-8) continue;
+        const disc = B * B - 4 * A * C;
+        if (disc < 0) continue;
+        const s = Math.sqrt(disc);
+        for (const t of [(-B - s) / (2 * A), (-B + s) / (2 * A)]) {
+          if (t <= 0.002) continue;
+          const y = tokenY + t * uy;
+          if (y >= -0.001 && y <= h + 0.001) return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 export const CAVITY_R = 0.48;
 export const VERTEX_CLEAR_R = 0.22;

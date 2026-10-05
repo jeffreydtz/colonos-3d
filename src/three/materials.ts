@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { ROBBER_OPACITY } from "./geo";
 import { TOKENS, TERRAIN_3D } from "../theme/tokens";
 import type { Terrain } from "@shared/types";
 
@@ -97,8 +98,23 @@ function build(q: Quality): MatBag {
         }),
     outline: new THREE.MeshBasicMaterial({ color: TOKENS.outline, side: THREE.BackSide, name: "mat.outline" }),
     robber: lite
-      ? lambert({ color: "#3a3d42", name: "mat.robber" })
-      : phys({ color: "#3e4147", roughness: 0.55, clearcoat: 0.35, clearcoatRoughness: 0.4, name: "mat.robber" }),
+      ? lambert({
+          color: "#3a3d42",
+          name: "mat.robber",
+          transparent: true,
+          opacity: ROBBER_OPACITY,
+          depthWrite: false,
+        })
+      : phys({
+          color: "#3e4147",
+          roughness: 0.55,
+          clearcoat: 0.35,
+          clearcoatRoughness: 0.4,
+          name: "mat.robber",
+          transparent: true,
+          opacity: ROBBER_OPACITY,
+          depthWrite: false,
+        }),
     dock: lite
       ? lambert({ color: "#5a3b22", name: "mat.dock" })
       : phys({ color: "#5a3b22", roughness: 0.7, name: "mat.dock" }),
