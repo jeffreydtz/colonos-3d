@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, type RefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { playDiceHit, playSfx, reduceMotion } from "../../audio/sfx";
-import { diceHeld, revealSettled, skipDiceHold } from "../../play/diceHold";
+import { diceHeld, DICE_SETTLE_PAD_S, revealSettled, settleRevealDelayMs, skipDiceHold } from "../../play/diceHold";
 import { useApp } from "../../store";
 import { useDispose } from "../dispose";
 import { feltAlbedo } from "../procTextures";
@@ -112,12 +112,21 @@ export function DiceRig({
     if (!presenting || !values || freeze || reduceMotion()) return;
     const seed = visualSeed(throwSeed, rollNo);
     const key = `${seed}:${values[0]}:${values[1]}:${tray[0]}:${tray[1]}:${tray[2]}`;
-    if (key === clipKey.current && clipRef.current) return;
-    clipRef.current = planThrow({ seed, values: [values[0], values[1]], tray });
-    clipKey.current = key;
-    t0.current = performance.now();
-    hitCursor.current = 0;
-    settledSfx.current = false;
+    if (key !== clipKey.current || !clipRef.current) {
+      clipRef.current = planThrow({ seed, values: [values[0], values[1]], tray });
+      clipKey.current = key;
+      t0.current = performance.now();
+      hitCursor.current = 0;
+      settledSfx.current = false;
+    }
+    const clip = clipRef.current;
+    const delay = settleRevealDelayMs(clip.settleAt, performance.now() - t0.current);
+    const timer = window.setTimeout(() => {
+      const ui = useApp.getState().diceUi;
+      const next = revealSettled(ui, clip.settleAt + DICE_SETTLE_PAD_S, clip.settleAt);
+      if (next !== ui) useApp.getState().set({ diceUi: next });
+    }, delay);
+    return () => window.clearTimeout(timer);
   }, [presenting, values, throwSeed, rollNo, freeze, tray]);
 
   useFrame(() => {

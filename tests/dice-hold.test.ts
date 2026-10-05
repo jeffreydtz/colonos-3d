@@ -12,6 +12,7 @@ import {
   resourcesAfterHold,
   rollGainsFor,
   revealSettled,
+  settleRevealDelayMs,
   skipDiceHold,
 } from "../src/play/diceHold.ts";
 function ev(partial: Partial<LogEvent> & Pick<LogEvent, "id" | "kind">): LogEvent {
@@ -61,6 +62,23 @@ describe("dados: la mano, el log y las cartas no adelantan el resultado", () => 
     const rig = readFileSync("src/three/dice/DiceRig.tsx", "utf8");
     expect(rig).toContain("revealSettled");
     expect(rig).toContain("clip.settleAt");
+  });
+
+  it("si el frame del asiento no llega, el HUD igual revela al tope settleAt + 0,1 s", () => {
+    expect(settleRevealDelayMs(0.62)).toBe(720);
+    expect(settleRevealDelayMs(0.62, 200)).toBe(520);
+    expect(settleRevealDelayMs(0.62, 900)).toBe(0);
+    const ui = beginDiceHold({ events, rollNo: 3 });
+    const shown = revealSettled(ui, 0.62 + 0.1, 0.62);
+    expect(shown.revealed).toBe(true);
+    expect(shown.presenting).toBe(true);
+    const rig = readFileSync("src/three/dice/DiceRig.tsx", "utf8");
+    const effect = rig.slice(rig.indexOf("useLayoutEffect(() => {"), rig.indexOf("useFrame(() => {"));
+    expect(effect.indexOf("reduceMotion()")).toBeGreaterThan(-1);
+    expect(effect.indexOf("reduceMotion()")).toBeLessThan(effect.indexOf("setTimeout"));
+    expect(effect).toContain("settleRevealDelayMs");
+    const game = readFileSync("src/screens/Game.tsx", "utf8");
+    expect(game).toContain("reduceMotion() ? DICE_HOLD_REDUCED_MS : DICE_HOLD_MS");
   });
 
   it("al revelar (o saltear) se ve todo, incluido quien reconecta sin fx", () => {

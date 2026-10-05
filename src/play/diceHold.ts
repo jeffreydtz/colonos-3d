@@ -40,6 +40,12 @@ export function revealSettled(ui: DiceUi, elapsedS: number, settleAtS: number): 
   return { ...ui, revealed: true };
 }
 
+/** Milisegundos de pared hasta revelar el HUD, contados desde el arranque de la tirada. */
+export function settleRevealDelayMs(settleAtS: number, elapsedMs = 0): number {
+  const due = (settleAtS + DICE_SETTLE_PAD_S) * 1000;
+  return Math.max(0, Math.round(due - elapsedMs));
+}
+
 /** Lo cobrado en eventos de dados que todavía no se pueden mostrar. */
 export function gainsWhileHeld(events: LogEvent[], holdFromEventId: number): Map<string, Partial<Resources>> {
   const map = new Map<string, Partial<Resources>>();
