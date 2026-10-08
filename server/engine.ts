@@ -36,7 +36,9 @@ import {
   legalRoadEdges,
   legalSettlementVertices,
   playerTouchesVertex,
+  robberMoverId,
   stealCandidates,
+  turnRole,
 } from "./legal.ts";
 import { longestRoadLength, refreshAwards } from "./longestRoad.ts";
 import {
@@ -216,6 +218,8 @@ export function createGame(opts: {
   seed?: number;
   victoryPoints?: number;
   entropy?: "test" | "crypto";
+  /** Índice de quien abre. Si no viene, en vivo se sortea con crypto; con semilla de test queda el primer asiento. */
+  startIndex?: number;
 }): GameState {
   const boardKind: BoardKind = boardKindForCount(opts.players.length);
   // Producción ignora semilla y entropy de test: el tablero y los dados salen de crypto.randomInt.
@@ -238,6 +242,14 @@ export function createGame(opts: {
     knightsPlayed: 0,
     pieces: { ...PIECES },
   }));
+  const nPlayers = players.length;
+  const startIndex =
+    opts.startIndex != null && Number.isInteger(opts.startIndex)
+      ? ((opts.startIndex % nPlayers) + nPlayers) % nPlayers
+      : entropy === "crypto" && (production || opts.seed == null)
+        ? cryptoInt(0, Math.max(0, nPlayers - 1))
+        : 0;
+  const starter = players[startIndex];
 
   const state: GameState = {
     id: `g-${seed}`,
@@ -253,7 +265,8 @@ export function createGame(opts: {
     buildings: [],
     roads: [],
     players,
-    turnIndex: 0,
+    startIndex,
+    turnIndex: startIndex,
     turnNumber: 0,
     phase: "colocacion_poblado",
     setupRound: 1,
@@ -276,13 +289,17 @@ export function createGame(opts: {
     pendingRoadBuilding: 0,
     knightBeforeRoll: false,
     pendingStealHexId: null,
+    robberActorId: null,
+    roadCardPlayerId: null,
     entropySeq: 0,
   };
   log(
     state,
     boardKind === "expansion"
-      ? `Isla grande (30 hexágonos). Empieza ${players[0]?.name ?? "el anfitrión"}.`
-      : `Isla clásica (19 hexágonos). Empieza ${players[0]?.name ?? "el anfitrión"}.`,
+      ? `Isla grande (30 hexágonos). Sorteo: empieza ${starter?.name ?? "alguien"}.`
+      : `Isla clásica (19 hexágonos). Sorteo: empieza ${starter?.name ?? "alguien"}.`,
+    "turno",
+    { playerId: starter?.id ?? null },
   );
   return state;
 }
@@ -383,22 +400,25 @@ function grantSecondSettlement(state: GameState, vertexId: string, player: Playe
 
 function nextSetup(state: GameState): void {
   const n = state.players.length;
+  const start = ((state.startIndex % n) + n) % n;
   if (state.setupRound === 1) {
-    if (state.turnIndex < n - 1) {
-      state.turnIndex += 1;
+    const next = (state.turnIndex + 1) % n;
+    if (next !== start) {
+      state.turnIndex = next;
       state.phase = "colocacion_poblado";
     } else {
       state.setupRound = 2;
       state.phase = "colocacion_poblado";
     }
-  } else if (state.turnIndex > 0) {
-    state.turnIndex -= 1;
+  } else if (state.turnIndex !== start) {
+    state.turnIndex = (state.turnIndex - 1 + n) % n;
     state.phase = "colocacion_poblado";
   } else {
     state.phase = "dados";
     state.turnNumber = 1;
-    log(state, `Listo el setup. ${state.players[0]?.name} tira los dados.`, "turno", {
-      playerId: state.players[0]?.id ?? null,
+    const opener = state.players[start];
+    log(state, `Listo el setup. ${opener?.name ?? "Alguien"} tira los dados.`, "turno", {
+      playerId: opener?.id ?? null,
     });
     checkWin(state, state.players[state.turnIndex]!.id);
   }
@@ -428,6 +448,7 @@ function startDiscardOrRobber(state: GameState): void {
 
 function afterRobber(state: GameState): void {
   state.trades = [];
+  state.robberActorId = null;
   if (state.knightBeforeRoll) {
     state.knightBeforeRoll = false;
     state.phase = "dados";
@@ -460,6 +481,8 @@ function advanceTurn(state: GameState): void {
   state.phase = "dados";
   state.playedDevThisTurn = false;
   state.pendingRoadBuilding = 0;
+  state.roadCardPlayerId = null;
+  state.robberActorId = null;
   state.knightBeforeRoll = false;
   state.dice = null;
   state.trades = [];
@@ -471,6 +494,19 @@ function advanceTurn(state: GameState): void {
 function fail(error: string): EngineResult {
   return { ok: false, error };
 }
+
+/** Lo que la pareja puede hacer en el turno del dueño. Dados, ladrón del 7 y pasar quedan del dueño. */
+const PAIRED_ACTIONS = new Set<Action["type"]>([
+  "build_road",
+  "build_settlement",
+  "build_city",
+  "buy_dev",
+  "play_knight",
+  "play_year_plenty",
+  "play_monopoly",
+  "play_road_building",
+  "bank_trade",
+]);
 
 export function applyAction(state: GameState, playerId: string, action: Action): EngineResult {
   try {
@@ -505,8 +541,16 @@ function applyActionInner(state: GameState, playerId: string, action: Action): E
     return actTradeResponse(state, player, action);
   }
 
-  const actor = currentPlayer(state);
-  if (!actor || actor.id !== playerId) return fail("No te toca.");
+  if (action.type === "move_robber") {
+    if (robberMoverId(state) !== playerId) return fail("Eso lo hace quien tiene el turno.");
+    return actRobber(state, player, action.hexId, action.stealFromId, false);
+  }
+
+  const role = turnRole(state, playerId);
+  if (!role) return fail("No te toca.");
+  if (role === "paired" && !PAIRED_ACTIONS.has(action.type)) {
+    return fail("Eso lo hace quien tiene el turno.");
+  }
 
   switch (action.type) {
     case "place_settlement":
@@ -515,8 +559,6 @@ function applyActionInner(state: GameState, playerId: string, action: Action): E
       return actPlaceRoad(state, player, action.edgeId);
     case "roll":
       return actRoll(state, player);
-    case "move_robber":
-      return actRobber(state, player, action.hexId, action.stealFromId, false);
     case "build_road":
       return actBuildRoad(state, player, action.edgeId);
     case "build_settlement":
@@ -742,6 +784,7 @@ function actBuildRoad(state: GameState, player: PlayerState, edgeId: string): En
     if (state.pendingRoadBuilding > 0 && legalRoadEdges(state, player.id, null).length === 0) {
       state.pendingRoadBuilding = 0;
     }
+    if (state.pendingRoadBuilding === 0) state.roadCardPlayerId = null;
     log(state, `${player.name} construyó un camino (carta).`, "build", {
       playerId: player.id,
       piece: "camino",
@@ -846,6 +889,7 @@ function actPlayKnight(
   consumeDev(player, "caballero", state.turnNumber);
   state.playedDevThisTurn = true;
   player.knightsPlayed += 1;
+  state.robberActorId = player.id;
   if (state.phase === "dados") state.knightBeforeRoll = true;
   log(state, `${player.name} jugó :caballero:`, "dev", {
     playerId: player.id,
@@ -944,6 +988,7 @@ function actRoadBuilding(state: GameState, player: PlayerState): EngineResult {
   consumeDev(player, "progreso_caminos", state.turnNumber);
   state.playedDevThisTurn = true;
   state.pendingRoadBuilding = Math.min(2, player.pieces.caminos);
+  state.roadCardPlayerId = player.id;
   log(state, `${player.name} jugó :caminos:`, "dev", {
     playerId: player.id,
     piece: "caminos",
@@ -1095,10 +1140,13 @@ function actBank(
 
 function actEndTurn(state: GameState, player: PlayerState): EngineResult {
   if (state.pendingRoadBuilding > 0) {
-    if (legalRoadEdges(state, player.id, null).length > 0) {
-      return fail("Todavía te faltan caminos de la carta.");
+    const who = state.roadCardPlayerId ?? player.id;
+    const spots = legalRoadEdges(state, who, null);
+    if (spots.length > 0) {
+      return fail(who === player.id ? "Todavía te faltan caminos de la carta." : "Faltan los caminos de la carta.");
     }
     state.pendingRoadBuilding = 0;
+    state.roadCardPlayerId = null;
   }
   if (state.phase === "construccion_especial") {
     state.specialBuildQueue.shift();

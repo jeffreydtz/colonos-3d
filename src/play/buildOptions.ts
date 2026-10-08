@@ -57,9 +57,20 @@ export function devOption(view: ClientView): { cost: Bag; state: BuildState } {
   return { cost, state: stateFor(view, view.legal.canBuyDev, cost, "Mazo vacío") };
 }
 
+/** Dueño del turno, o la pareja en 5–6 mientras se puede construir o jugar cartas. */
+export function actsWithTurn(view: ClientView): boolean {
+  if (view.currentPlayerId === view.youId) return true;
+  return (
+    view.pairedPlayerId === view.youId && (view.phase === "principal" || view.phase === "dados")
+  );
+}
+
 function stateFor(view: ClientView, ready: boolean, cost: Bag, blocked: string): BuildState {
   if (ready) return { kind: "ready" };
-  if (view.currentPlayerId !== view.youId) return { kind: "wait", note: "En tu turno" };
+  if (!actsWithTurn(view)) return { kind: "wait", note: "En tu turno" };
+  if (view.phase === "dados" && view.currentPlayerId !== view.youId) {
+    return { kind: "wait", note: "Después de los dados" };
+  }
   if (view.phase !== "principal" && view.phase !== "construccion_especial") {
     const note =
       view.phase === "dados"

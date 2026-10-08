@@ -461,8 +461,9 @@ export function startGame(
     seed: process.env.NODE_ENV === "production" ? undefined : opts?.seed,
     players,
   });
+  const opener = room.game.players[room.game.startIndex] ?? room.game.players[0];
   room.kickoff = {
-    starterId: room.game.players[0]?.id ?? room.hostId,
+    starterId: opener?.id ?? room.hostId,
     boardKind: room.game.boardKind,
     order: room.seats.map((s) => ({
       id: s.id,
@@ -491,7 +492,9 @@ function completeSetupIfNeeded(state: GameState): void {
   const need = state.players.length * 2;
   if (state.buildings.length >= need) return;
   const n = state.players.length;
-  const order = [...Array(n).keys(), ...[...Array(n).keys()].reverse()];
+  const start = ((state.startIndex % n) + n) % n;
+  const forward = Array.from({ length: n }, (_, i) => (start + i) % n);
+  const order = [...forward, ...[...forward].reverse()];
   for (const idx of order) {
     if (state.buildings.filter((b) => b.playerId === state.players[idx]!.id).length >= 2) continue;
     const p = state.players[idx]!;

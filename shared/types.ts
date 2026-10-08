@@ -169,6 +169,8 @@ export interface GameState {
   buildings: Building[];
   roads: Road[];
   players: PlayerState[];
+  /** Índice del asiento que abre. Se sortea una vez al crear la partida y no se vuelve a tirar. */
+  startIndex: number;
   turnIndex: number;
   turnNumber: number;
   phase: Phase;
@@ -193,6 +195,10 @@ export interface GameState {
   pendingRoadBuilding: number;
   knightBeforeRoll: boolean;
   pendingStealHexId: string | null;
+  /** Si está, sólo esta persona mueve el ladrón (un caballero de la pareja). Null: el dueño del turno, en un 7. */
+  robberActorId: string | null;
+  /** Quién jugó Construcción de caminos y tiene que poner las piezas. */
+  roadCardPlayerId: string | null;
   /** Contador de entropy de test: cada dado/robo avanza, independiente del mazo. */
   entropySeq: number;
 }
@@ -292,6 +298,10 @@ export interface ClientView {
   deadlineAt: number | null;
   phase: Phase;
   currentPlayerId: string | null;
+  /** Quién salió en el sorteo. Igual después de reconectar. */
+  starterId: string | null;
+  /** Pareja del dueño en 5–6, en dados / turno / ladrón. Null en 3–4 y en la colocación. */
+  pairedPlayerId: string | null;
   turnNumber: number;
   dice: [number, number] | null;
   rollNo: number;

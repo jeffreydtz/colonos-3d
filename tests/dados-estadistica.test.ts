@@ -122,6 +122,7 @@ describe("la tirada de producción no acepta semilla ni dados del cliente", () =
     expect(state.seed).not.toBe(123456);
     setupSnake(state);
     state.phase = "dados";
+    state.turnIndex = 0;
     const rolled = applyAction(state, "p0", { type: "roll" });
     expect(rolled.ok).toBe(true);
     expect(state.dice?.[0]).toBeGreaterThanOrEqual(1);

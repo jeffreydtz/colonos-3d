@@ -1,4 +1,5 @@
 import { COSTS } from "../shared/constants.ts";
+import { pairedSeat } from "../shared/paired.ts";
 import type { GameState, LegalMoves, Resource } from "../shared/types.ts";
 import { hasResources, sumResources } from "./resources.ts";
 
@@ -8,6 +9,57 @@ export function currentPlayer(state: GameState) {
     return state.players.find((p) => p.id === id) ?? null;
   }
   return state.players[state.turnIndex] ?? null;
+}
+
+/** Dueño del turno (el que tira y pasa). En la pausa de construcción sigue siendo el índice, no quien construye. */
+export function turnOwner(state: GameState) {
+  return state.players[state.turnIndex] ?? null;
+}
+
+/**
+ * Pareja que puede construir y comerciar con el banco durante el turno.
+ * No corre en la colocación, el descarte ni la pausa de construcción: ahí juega una sola persona.
+ */
+export function pairedPlayerId(state: GameState): string | null {
+  if (
+    state.phase === "fin" ||
+    state.phase === "colocacion_poblado" ||
+    state.phase === "colocacion_camino" ||
+    state.phase === "descarte" ||
+    state.phase === "construccion_especial"
+  ) {
+    return null;
+  }
+  const idx = pairedSeat(state.turnIndex, state.players.length);
+  if (idx == null) return null;
+  return state.players[idx]?.id ?? null;
+}
+
+export type TurnRole = "owner" | "paired" | "special";
+
+/** Quién puede mandar una jugada de turno. El descarte y el ladrón de un 7 se filtran aparte. */
+export function turnRole(state: GameState, playerId: string): TurnRole | null {
+  if (state.phase === "fin" || state.phase === "descarte") return null;
+  if (state.phase === "construccion_especial") {
+    return state.specialBuildQueue[0] === playerId ? "special" : null;
+  }
+  const owner = state.players[state.turnIndex];
+  if (!owner) return null;
+  if (
+    state.phase === "colocacion_poblado" ||
+    state.phase === "colocacion_camino" ||
+    state.phase === "ladron"
+  ) {
+    return owner.id === playerId ? "owner" : null;
+  }
+  if (owner.id === playerId) return "owner";
+  if (pairedPlayerId(state) === playerId) return "paired";
+  return null;
+}
+
+/** Quién mueve el ladrón: el dueño en un 7, o quien jugó el caballero. */
+export function robberMoverId(state: GameState): string | null {
+  return state.robberActorId ?? state.players[state.turnIndex]?.id ?? null;
 }
 
 export function emptyLegal(): LegalMoves {
@@ -156,18 +208,8 @@ export function legalMoves(state: GameState, playerId: string): LegalMoves {
     return legal;
   }
 
-  const actor = currentPlayer(state);
-  if (!actor || actor.id !== playerId) return legal;
-
-  if (state.phase === "colocacion_poblado") {
-    legal.vertices = legalSettlementVertices(state, playerId, true);
-    return legal;
-  }
-  if (state.phase === "colocacion_camino") {
-    legal.edges = legalRoadEdges(state, playerId, state.lastSettlementVertexId);
-    return legal;
-  }
   if (state.phase === "ladron") {
+    if (robberMoverId(state) !== playerId) return legal;
     if (state.pendingStealHexId) {
       legal.stealFrom = stealCandidates(state, state.pendingStealHexId, playerId);
       legal.hexes = [];
@@ -179,42 +221,45 @@ export function legalMoves(state: GameState, playerId: string): LegalMoves {
     return legal;
   }
 
+  const role = turnRole(state, playerId);
+  if (!role) return legal;
+
+  if (state.phase === "colocacion_poblado") {
+    legal.vertices = legalSettlementVertices(state, playerId, true);
+    return legal;
+  }
+  if (state.phase === "colocacion_camino") {
+    legal.edges = legalRoadEdges(state, playerId, state.lastSettlementVertexId);
+    return legal;
+  }
+
   if (state.pendingRoadBuilding > 0 && (state.phase === "principal" || state.phase === "construccion_especial")) {
-    legal.edges = legalRoadEdges(state, playerId, null);
-    legal.canEndTurn = legal.edges.length === 0;
+    const who = state.roadCardPlayerId ?? state.players[state.turnIndex]?.id ?? playerId;
+    if (playerId === who) {
+      legal.edges = legalRoadEdges(state, playerId, null);
+      legal.canEndTurn = role !== "paired" && legal.edges.length === 0;
+      return legal;
+    }
+    if (role === "owner" || role === "special") {
+      legal.canEndTurn = legalRoadEdges(state, who, null).length === 0;
+    }
     return legal;
   }
 
   if (state.phase === "dados") {
-    legal.canRoll = true;
+    legal.canRoll = role === "owner";
     legal.canPlayKnight = playable(state, playerId, "caballero");
     return legal;
   }
 
   if (state.phase === "construccion_especial") {
-    if (hasResources(player.resources, COSTS.camino) && player.pieces.caminos > 0) {
-      legal.edges = legalRoadEdges(state, playerId, null);
-    }
-    if (hasResources(player.resources, COSTS.poblado) && player.pieces.poblados > 0) {
-      legal.vertices = legalSettlementVertices(state, playerId, false);
-    }
-    if (hasResources(player.resources, COSTS.ciudad) && player.pieces.ciudades > 0) {
-      legal.cityVertices = legalCityVertices(state, playerId);
-    }
+    fillBuild(state, player, legal);
     legal.canEndTurn = true;
     return legal;
   }
 
   if (state.phase === "principal") {
-    if (hasResources(player.resources, COSTS.camino) && player.pieces.caminos > 0) {
-      legal.edges = legalRoadEdges(state, playerId, null);
-    }
-    if (hasResources(player.resources, COSTS.poblado) && player.pieces.poblados > 0) {
-      legal.vertices = legalSettlementVertices(state, playerId, false);
-    }
-    if (hasResources(player.resources, COSTS.ciudad) && player.pieces.ciudades > 0) {
-      legal.cityVertices = legalCityVertices(state, playerId);
-    }
+    fillBuild(state, player, legal);
     legal.canBuyDev = hasResources(player.resources, COSTS.dev) && state.devDeck.length > 0;
     legal.canPlayKnight = playable(state, playerId, "caballero");
     legal.canPlayYearPlenty = playable(state, playerId, "progreso_invento");
@@ -223,11 +268,25 @@ export function legalMoves(state: GameState, playerId: string): LegalMoves {
       playable(state, playerId, "progreso_caminos") &&
       player.pieces.caminos >= 1 &&
       legalRoadEdges(state, playerId, null).length >= 1;
-    legal.canTrade = true;
     legal.canBankTrade = true;
-    legal.canEndTurn = true;
-    legal.robberHexes = state.hexes.filter((h) => h.id !== state.robberHexId).map((h) => h.id);
+    if (role === "owner") {
+      legal.canTrade = true;
+      legal.canEndTurn = true;
+      legal.robberHexes = state.hexes.filter((h) => h.id !== state.robberHexId).map((h) => h.id);
+    }
   }
 
   return legal;
+}
+
+function fillBuild(state: GameState, player: GameState["players"][number], legal: LegalMoves): void {
+  if (hasResources(player.resources, COSTS.camino) && player.pieces.caminos > 0) {
+    legal.edges = legalRoadEdges(state, player.id, null);
+  }
+  if (hasResources(player.resources, COSTS.poblado) && player.pieces.poblados > 0) {
+    legal.vertices = legalSettlementVertices(state, player.id, false);
+  }
+  if (hasResources(player.resources, COSTS.ciudad) && player.pieces.ciudades > 0) {
+    legal.cityVertices = legalCityVertices(state, player.id);
+  }
 }

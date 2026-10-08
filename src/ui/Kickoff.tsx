@@ -49,7 +49,7 @@ export function Kickoff({ info, onDone }: { info: KickoffInfo; onDone: () => voi
         <p className="mt-3 flex items-center gap-2 text-lg text-amber-50" data-testid="kickoff-starter">
           <span className="h-4 w-4 shrink-0 rounded-full border border-white/40" style={{ background: COLOR_HEX[starter.color] }} />
           <span>
-            Arranca <b style={{ color: COLOR_HEX[starter.color] }}>{starter.name}</b>
+            Sorteo: arranca <b style={{ color: COLOR_HEX[starter.color] }}>{starter.name}</b>
             <span className="text-amber-100/70"> · {COLOR_LABEL[starter.color]}</span>
             {starter.isBot ? <span className="ml-2 text-xs font-bold tracking-wide text-sky-300 uppercase">bot</span> : null}
           </span>

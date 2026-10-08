@@ -1,6 +1,6 @@
 import type { ChatMessage, ClientView, GameState, KickoffInfo, LogEvent, PrivateHand, PublicPlayer } from "../shared/types.ts";
 import { RESOURCES } from "../shared/types.ts";
-import { currentPlayer, legalMoves } from "./legal.ts";
+import { currentPlayer, legalMoves, pairedPlayerId } from "./legal.ts";
 import { totalVp, visibleVp } from "./engine.ts";
 import { sumResources } from "./resources.ts";
 
@@ -71,6 +71,8 @@ export function toClientView(
 ): ClientView {
   const you = state.players.find((p) => p.id === playerId);
   const actor = currentPlayer(state);
+  const pairId = pairedPlayerId(state);
+  const onTurn = actor?.id === playerId || pairId === playerId;
   const players: PublicPlayer[] = state.players.map((p) => ({
     id: p.id,
     name: p.name,
@@ -124,12 +126,14 @@ export function toClientView(
     bank: null,
     /** Booleanos de stock, nunca cantidades: habilitan el 4:1 del jugador actual. */
     bankHas:
-      state.phase === "principal" && actor?.id === playerId
+      state.phase === "principal" && onTurn
         ? Object.fromEntries(RESOURCES.map((r) => [r, state.bank[r] > 0]))
         : null,
     deadlineAt: extras.deadlineAt ?? null,
     phase: state.phase,
     currentPlayerId: actor?.id ?? null,
+    starterId: state.players[state.startIndex]?.id ?? state.players[0]?.id ?? null,
+    pairedPlayerId: pairId,
     turnNumber: state.turnNumber,
     dice: state.dice,
     rollNo: state.rollNo,
@@ -144,7 +148,8 @@ export function toClientView(
     chat: extras.chat.slice(-80),
     winnerId: state.winnerId,
     specialBuildPlayerId: state.phase === "construccion_especial" ? (state.specialBuildQueue[0] ?? null) : null,
-    pendingRoadBuilding: actor?.id === playerId ? state.pendingRoadBuilding : 0,
+    pendingRoadBuilding:
+      actor?.id === playerId || state.roadCardPlayerId === playerId ? state.pendingRoadBuilding : 0,
     hand,
     waitingDiscard: state.waitingDiscard,
     unboxPlayerId: extras.unboxPlayerId ?? null,

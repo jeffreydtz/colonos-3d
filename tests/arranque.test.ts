@@ -120,11 +120,15 @@ describe("arranque con 2 a 6 clientes y bots", () => {
     await new Promise((r) => setTimeout(r, 120));
 
     const starter = started.view!.kickoff!.starterId;
-    expect(started.view!.phase).toBe("colocacion_poblado");
-    expect(started.view!.currentPlayerId).toBe(starter);
-    expect(started.view!.players[0]?.id).toBe(starter);
-    expect(started.view!.kickoff!.order[0]?.id).toBe(starter);
-    expect(started.view!.buildings).toHaveLength(0);
+    const opener = started.view!.kickoff!.order.find((p) => p.id === starter);
+    expect(started.view!.starterId).toBe(starter);
+    expect(started.view!.players.some((p) => p.id === starter)).toBe(true);
+    expect(opener).toBeTruthy();
+    if (!opener?.isBot) {
+      expect(started.view!.phase).toBe("colocacion_poblado");
+      expect(started.view!.currentPlayerId).toBe(starter);
+      expect(started.view!.buildings).toHaveLength(0);
+    }
 
     for (let i = 0; i < humans; i++) {
       const v = firstView[i];
@@ -132,8 +136,9 @@ describe("arranque con 2 a 6 clientes y bots", () => {
       const viewAt = trail[i]!.indexOf("view");
       expect(viewAt, `cliente ${i} sin vista: ${trail[i]!.join(",")}`).toBeGreaterThanOrEqual(0);
       expect(trail[i]!.slice(viewAt).includes("lobby"), `lobby después de la vista: ${trail[i]!.join(",")}`).toBe(false);
-      expect(v!.phase).toBe("colocacion_poblado");
-      expect(v!.currentPlayerId).toBe(starter);
+      expect(v!.phase).toBe(started.view!.phase);
+      expect(v!.currentPlayerId).toBe(started.view!.currentPlayerId);
+      expect(v!.starterId).toBe(starter);
       expect(v!.kickoff?.starterId).toBe(starter);
       expect(v!.kickoff?.order.map((p) => p.id)).toEqual(started.view!.kickoff!.order.map((p) => p.id));
       expect(v!.kickoff?.order.map((p) => p.color)).toEqual(started.view!.kickoff!.order.map((p) => p.color));

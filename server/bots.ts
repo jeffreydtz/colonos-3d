@@ -3,7 +3,7 @@ import { pips } from "../shared/hex.ts";
 import { RESOURCES } from "../shared/types.ts";
 import type { Action, ClientView, GameState, Resource, Resources, TradeOffer } from "../shared/types.ts";
 import { applyAction, createGame } from "./engine.ts";
-import { currentPlayer, legalMoves, legalRoadEdges } from "./legal.ts";
+import { currentPlayer, legalMoves, legalRoadEdges, pairedPlayerId } from "./legal.ts";
 import { hasResources, pickDiscard, sumResources } from "./resources.ts";
 import { toClientView } from "./view.ts";
 
@@ -294,7 +294,7 @@ export function chooseBotActionFromView(view: ClientView): Action | null {
     return { type: "move_robber", hexId, stealFromId: pickVictim(view, legal.stealFrom) };
   }
 
-  if (view.youId !== view.currentPlayerId) return null;
+  if (view.youId !== view.currentPlayerId && view.youId !== view.pairedPlayerId) return null;
 
   if (view.phase === "colocacion_poblado" && legal.vertices.length) {
     const best = legal.vertices.slice().sort((a, b) => vertexScore(view, b) - vertexScore(view, a))[0]!;
@@ -405,7 +405,7 @@ export function forceProgress(state: GameState, playerId: string): boolean {
   }
 
   const actor = currentPlayer(state);
-  if (!actor || actor.id !== playerId) return false;
+  if ((!actor || actor.id !== playerId) && pairedPlayerId(state) !== playerId) return false;
 
   if (state.pendingRoadBuilding > 0) {
     const edges = legalRoadEdges(state, playerId, null);

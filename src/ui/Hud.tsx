@@ -14,6 +14,7 @@ import { saveGraphicsMode } from "../three/graphics";
 import { offersForYou, tradeTabFor } from "../play/actionTabs";
 import { stealNoticeForYou } from "../play/stealNotice";
 import { dockLabel } from "../play/phaseCue";
+import { pairedIdFromSeats, turnBarLabel } from "../play/turnLabel";
 import { shownPoints, winnerShownPoints } from "../play/shownPoints";
 import { handCaption } from "../play/publicHand";
 import { PublicHand } from "./PublicHand";
@@ -52,9 +53,12 @@ const PHASE_OTHERS: Record<string, string> = {
   fin: "Se terminó la partida.",
 };
 
-function phaseLine(view: ClientView, yourTurn: boolean, currentName: string): string {
+function phaseLine(view: ClientView, yourTurn: boolean, currentName: string, youPair = false): string {
   if (view.winnerId) {
     return `Ganó ${view.players.find((p) => p.id === view.winnerId)?.name ?? "alguien"}`;
+  }
+  if (youPair && !yourTurn) {
+    return `También jugás: construí, cartas o el banco. Dados, ladrón y pasar son de ${currentName}.`;
   }
   if (view.pendingRoadBuilding > 0 && yourTurn) {
     return view.pendingRoadBuilding === 2 ? "Poné 2 caminos" : "Poné 1 camino";
@@ -141,6 +145,7 @@ function SeatChip({
   cards?: number;
 }) {
   const current = p.id === view.currentPlayerId;
+  const paired = p.id === pairedIdFromSeats(view.players, view.currentPlayerId, view.phase);
   const you = p.id === view.youId;
   const tint = COLOR_HEX[p.color];
   const glyph = PLAYER_GLYPHS[i % PLAYER_GLYPHS.length];
@@ -150,10 +155,11 @@ function SeatChip({
   return (
     <div
       className={`panel flex min-w-0 flex-col justify-center rounded-lg py-1 ${layout} ${
-        current ? "ring-2 ring-amber-300 bg-amber-200/15" : ""
+        current ? "ring-2 ring-amber-300 bg-amber-200/15" : paired ? "ring-2 ring-sky-300/80" : ""
       } ${you ? "border-amber-200/60" : ""}`}
       data-testid="seat-chip"
       data-seat={p.id}
+      data-paired={paired ? "true" : undefined}
       aria-current={current ? "true" : undefined}
       title={`${glyph} ${p.name}${p.isBot ? " (bot)" : ""} · ${p.visibleVp} puntos · ${hand}`}
     >
@@ -261,9 +267,16 @@ function TurnBar({ view }: { view: ClientView }) {
   const current = view.players.find((p) => p.id === view.currentPlayerId);
   const winner = view.winnerId ? view.players.find((p) => p.id === view.winnerId) : undefined;
   const yourTurn = view.currentPlayerId === view.youId && !view.winnerId;
+  const pairedId = pairedIdFromSeats(view.players, view.currentPlayerId, view.phase);
+  const paired = pairedId ? view.players.find((p) => p.id === pairedId) : undefined;
   const shown = winner ?? current;
   const tint = COLOR_HEX[shown?.color ?? "naranja"];
-  const label = winner ? `Ganó ${winner.name}` : yourTurn ? `Vos: ${current?.name ?? "…"}` : (current?.name ?? "…");
+  const label = turnBarLabel({
+    winnerName: winner?.name ?? null,
+    ownerName: current?.name ?? "…",
+    pairedName: paired?.name ?? null,
+    youOwn: yourTurn,
+  });
   return (
     <div
       className="pointer-events-none bg-[#0b0806] px-2 pt-1.5 pb-1 lg:bg-transparent lg:px-3 lg:pt-0 lg:pr-80 lg:pb-0"
@@ -277,9 +290,12 @@ function TurnBar({ view }: { view: ClientView }) {
         <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-white/50" style={{ background: tint }} aria-hidden />
         <p className="flex min-w-0 flex-1 items-center gap-2" aria-live="polite">
           <span
-            className="display min-w-0 truncate text-xl font-semibold leading-none md:text-2xl"
+            className={`display min-w-0 font-semibold leading-tight ${
+              paired ? "text-base md:text-xl" : "truncate text-xl leading-none md:text-2xl"
+            }`}
             style={{ color: tint }}
             data-testid={yourTurn ? "tu-turno" : undefined}
+            data-turn-role={yourTurn ? "dueno" : pairedId === view.youId ? "pareja" : "espera"}
           >
             {label}
           </span>
@@ -321,6 +337,8 @@ export function Hud({ view }: { view: ClientView }) {
   const stealSeen = useRef<number | null>(null);
   const current = view.players.find((p) => p.id === view.currentPlayerId);
   const yourTurn = view.currentPlayerId === view.youId;
+  const youPair =
+    pairedIdFromSeats(view.players, view.currentPlayerId, view.phase) === view.youId && !yourTurn;
   const manySeats = view.players.length >= 5;
   const incoming = view.trades.filter(
     (t) => t.toId === view.youId || t.toId === "todos" || t.fromId === view.youId,
@@ -411,9 +429,9 @@ export function Hud({ view }: { view: ClientView }) {
       if (primary.tone === "amber" && !r.ok) set({ toast: r.error ?? "No se pudo." });
     });
   }
-  const phaseCueLabel = dockLabel(view.phase, yourTurn, current?.name ?? "");
+  const phaseCueLabel = youPair ? "También" : dockLabel(view.phase, yourTurn, current?.name ?? "");
   const phaseCue =
-    !holdingDice && !primary && yourTurn && phaseCueLabel !== "Tu turno" && phaseCueLabel !== "Fin"
+    !holdingDice && !primary && (yourTurn || youPair) && phaseCueLabel !== "Tu turno" && phaseCueLabel !== "Fin"
       ? phaseCueLabel
       : null;
 
@@ -765,8 +783,8 @@ export function Hud({ view }: { view: ClientView }) {
                 type="button"
                 className="min-h-11 rounded-full bg-amber-200 px-5 text-sm font-semibold text-stone-900 shadow-lg"
                 data-testid="desk-phase"
-                aria-label={phaseLine(view, yourTurn, current?.name ?? "otro")}
-                onClick={() => set({ hint: phaseLine(view, yourTurn, current?.name ?? "otro") })}
+                aria-label={phaseLine(view, yourTurn, current?.name ?? "otro", youPair)}
+                onClick={() => set({ hint: phaseLine(view, yourTurn, current?.name ?? "otro", youPair) })}
               >
                 {phaseCue}
               </button>
@@ -825,11 +843,11 @@ export function Hud({ view }: { view: ClientView }) {
               />
             ) : (
               <DockBtn
-                label={dockLabel(view.phase, yourTurn, current?.name ?? "")}
-                tone={yourTurn ? "amber" : "muted"}
+                label={youPair ? "También" : dockLabel(view.phase, yourTurn, current?.name ?? "")}
+                tone={yourTurn || youPair ? "amber" : "muted"}
                 testId="dock-primary"
-                ariaLabel={phaseLine(view, yourTurn, current?.name ?? "otro")}
-                onClick={() => set({ hint: phaseLine(view, yourTurn, current?.name ?? "otro") })}
+                ariaLabel={phaseLine(view, yourTurn, current?.name ?? "otro", youPair)}
+                onClick={() => set({ hint: phaseLine(view, yourTurn, current?.name ?? "otro", youPair) })}
               />
             )}
             <DockBtn
